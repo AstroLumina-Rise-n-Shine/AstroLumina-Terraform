@@ -25,6 +25,11 @@ concurrency:
   group: terraform-ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege for the GITHUB_TOKEN: every job only reads the repo,
+# except the Trivy job which additionally uploads SARIF (job-level grant).
+permissions:
+  contents: read
+
 jobs:
   fmt:
     name: Terraform fmt (format)
