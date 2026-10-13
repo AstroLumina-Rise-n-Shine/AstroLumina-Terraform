@@ -477,11 +477,41 @@ ensure_network() {
     fi
 }
 
+# Ensure the Floci-emulated S3 bucket + DynamoDB lock table used for remote
+# state exist (idempotent: creates only what is missing). Fails loudly when
+# Floci is not running or the AWS CLI is absent -- remote state cannot work
+# without them, and failing here beats a cryptic backend error from init.
+ensure_state_backend() {
+    local endpoint="http://localhost:4566"
+    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
+    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
+    export AWS_EC2_METADATA_DISABLED=true
+    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+    if ! command -v aws &> /dev/null; then
+        echo "aws CLI not found (needed for remote-state bootstrap)" >&2
+        return 1
+    fi
+    if ! aws --endpoint-url "$endpoint" s3api head-bucket --bucket astrolumina-terraform-state 2>/dev/null; then
+        echo "Creating S3 state bucket..."
+        aws --endpoint-url "$endpoint" s3 mb s3://astrolumina-terraform-state --region us-east-1 || return 1
+        aws --endpoint-url "$endpoint" s3api put-bucket-versioning --bucket astrolumina-terraform-state --versioning-configuration Status=Enabled || return 1
+    else
+        echo "S3 state bucket already exists"
+    fi
+    if ! aws --endpoint-url "$endpoint" dynamodb describe-table --table-name terraform-state-locks &>/dev/null; then
+        echo "Creating DynamoDB lock table..."
+        aws --endpoint-url "$endpoint" dynamodb create-table --table-name terraform-state-locks --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST --region us-east-1 || return 1
+    else
+        echo "DynamoDB lock table already exists"
+    fi
+}
+
 case $1 in
     "init")
         check_packages
         ensure_network
         init_images
+        ensure_state_backend || exit 1
 		terraform -chdir="$TF_DIR" init
         ;;
     "apply")

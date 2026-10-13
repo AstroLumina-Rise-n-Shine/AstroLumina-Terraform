@@ -158,7 +158,7 @@ adopting the live VMs is a file copy -- no `state mv` needed:
 ```bash
 cp terraform.tfstate* environments/development/
 cd environments/development
-terraform init
+terraform init -migrate-state   # uploads the local state into the S3 backend
 terraform plan   # must show no changes
 ```
 
@@ -166,6 +166,22 @@ terraform plan   # must show no changes
 `apply` creates new VMs -- remember the one-environment-at-a-time rule).
 Keep the root `terraform.tfstate*` files until the adoption is verified,
 then delete them.
+
+### 5. Remote state (S3 + DynamoDB locking, via Floci)
+
+Each environment keeps its state in the Floci-emulated S3 backend instead
+of local files: bucket `astrolumina-terraform-state` (versioning on), one
+object per environment (`development/terraform.tfstate`, ...), and a single
+shared DynamoDB lock table `terraform-state-locks` (lock IDs are per state
+key, so the three environments never block each other). The two resources
+are created automatically by `./tf.sh [env] init` (idempotent -- existing
+bucket/table are left alone), which fails loudly when Floci is not running.
+
+Locking is proven end to end: concurrent runs serialize on the table, and a
+crashed run leaves no stale lock behind (verify with
+`aws --endpoint-url http://localhost:4566 dynamodb scan --table-name
+terraform-state-locks`). CI is unaffected -- it runs
+`init -backend=false`, so no Floci is needed there.
 
 ## Helper commands (tf.sh)
 
