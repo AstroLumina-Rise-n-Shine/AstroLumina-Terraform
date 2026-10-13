@@ -8,16 +8,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # Active environment (development/staging/production). A leading argument
-# matching an environment name selects it and is consumed; otherwise the
-# command runs against TF_ENV or the development default. Each environment
-# is a separate Terraform root with its own state, and a single laptop
-# runs one environment at a time (destroy the current one before applying
-# another -- names, MACs and IPs are identical across environments).
+# matching an environment name selects it and is consumed; an explicit
+# TF_ENV selects it silently (automation/CI); otherwise, on an interactive
+# terminal, the script asks which environment to use (empty answer keeps the
+# development default). Without a terminal it falls back to development so
+# piped/CI runs never hang waiting for input. Each environment is a
+# separate Terraform root with its own state, and a single laptop runs one
+# environment at a time (destroy the current one before applying another --
+# names, MACs and IPs are identical across environments).
 ENVIRONMENTS_DIR="$SCRIPT_DIR/environments"
-ENV="${TF_ENV:-development}"
+ENV="${TF_ENV:-}"
 if [[ "${1:-}" == "development" || "${1:-}" == "staging" || "${1:-}" == "production" ]]; then
     ENV="$1"
     shift
+fi
+if [[ -z "$ENV" ]]; then
+    if [[ -t 0 ]]; then
+        while true; do
+            read -rp "Environment [development/staging/production] (default: development): " ENV
+            ENV="${ENV,,}"
+            ENV="${ENV:-development}"
+            if [[ "$ENV" == "development" || "$ENV" == "staging" || "$ENV" == "production" ]]; then
+                break
+            fi
+            echo "Unknown environment: '$ENV' -- expected development, staging or production." >&2
+            ENV=""
+        done
+    else
+        echo "No environment given and stdin is not a terminal; using default: development." >&2
+        ENV="development"
+    fi
+fi
+if [[ ! -d "$ENVIRONMENTS_DIR/$ENV" ]]; then
+    echo "Unknown environment: '$ENV' (no $ENVIRONMENTS_DIR/$ENV directory)." >&2
+    exit 1
 fi
 TF_DIR="$ENVIRONMENTS_DIR/$ENV"
 
@@ -561,9 +585,10 @@ case $1 in
         echo "Usage: $0 [environment] [command]"
         echo ""
         echo "Environment: development (default), staging, production."
-        echo "A leading environment name is consumed as selector; TF_ENV"
-        echo "overrides the default. Terraform runs with -chdir into"
-        echo "environments/<env>, which holds that env's own state file."
+        echo "A leading environment name is consumed as selector; an explicit"
+        echo "TF_ENV selects silently; otherwise you are asked interactively."
+        echo "Terraform runs with -chdir into environments/<env>, which holds"
+        echo "that env's own state file."
         echo ""
         echo "Commands:"
         echo "  init              - Download base images and initialize Terraform"
