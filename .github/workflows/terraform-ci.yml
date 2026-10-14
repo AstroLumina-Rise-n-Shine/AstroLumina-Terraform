@@ -56,11 +56,19 @@ jobs:
         with:
           terraform_version: "1.9.*"
 
-      - name: Terraform init (no backend — validation only)
-        run: terraform init -backend=false
+      - name: Terraform init (no backend — validation only, per environment)
+        run: |
+          for env in development staging production; do
+            echo "--- $env ---"
+            terraform -chdir="environments/$env" init -backend=false
+          done
 
-      - name: Terraform validate
-        run: terraform validate -no-color
+      - name: Terraform validate (per environment)
+        run: |
+          for env in development staging production; do
+            echo "--- $env ---"
+            terraform -chdir="environments/$env" validate -no-color
+          done
 
   tflint:
     name: TFLint (best practices)

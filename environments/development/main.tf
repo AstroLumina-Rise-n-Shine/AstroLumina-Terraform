@@ -1,4 +1,11 @@
-# Terraform Configuration for RKE2 Cluster on KVM
+# RKE2 cluster on KVM: thin environment root.
+#
+# This file is intentionally identical across development / staging /
+# production -- ONLY terraform.tfvars next to it differs. Shared logic
+# lives in the AstroLumina-Terraform-Library `kvm_vm` module; each
+# environment gets its own state file, so apply/destroy here never touches
+# the other two. Rule of the lab: a single laptop runs ONE environment at
+# a time (destroy the current one before applying another).
 
 terraform {
   required_version = ">= 1.0"
@@ -15,12 +22,11 @@ provider "libvirt" {
 }
 
 # ============================================================
-# Variables
+# Variables (values come from terraform.tfvars)
 # ============================================================
 variable "ssh_pub_key" {
   description = "SSH public key for access"
   type        = string
-  default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOQIgh+H2AXLQyqOm5uVT0r0FhT9iAnF6k9d7UjrxUh5 daniel.catalin.pirvu@gmail.com"
 }
 
 variable "ssh_password" {
@@ -50,19 +56,53 @@ variable "tailscale_suffix" {
   default     = ""
 }
 
+variable "cp_vcpu" {
+  description = "Control-plane virtual CPUs"
+  type        = number
+}
+
+variable "cp_memory_mb" {
+  description = "Control-plane RAM in MB"
+  type        = number
+}
+
+variable "cp_disk_gb" {
+  description = "Control-plane OS disk in GB"
+  type        = number
+}
+
+variable "worker_vcpu" {
+  description = "Worker virtual CPUs (both workers)"
+  type        = number
+}
+
+variable "worker_memory_mb" {
+  description = "Worker RAM in MB (both workers)"
+  type        = number
+}
+
+variable "worker_disk_gb" {
+  description = "Worker OS disk in GB (both workers)"
+  type        = number
+}
+
 locals {
+  # Names, MACs and LAN IPs are identical in every environment on purpose:
+  # tf.sh, the Tailscale hostnames and the Kubernetes node names all rely
+  # on them, and a single laptop runs one environment at a time anyway.
+  # Only sizing differs per environment (see terraform.tfvars).
   ubuntu_image_path = "/var/lib/libvirt/images/ubuntu-24.04.qcow2"
-  k8s_share_path    = var.k8s_repo_host_path != null ? var.k8s_repo_host_path : abspath("${path.module}/../AstroLumina-Kubernetes")
+  k8s_share_path    = var.k8s_repo_host_path != null ? var.k8s_repo_host_path : abspath("${path.module}/../../../AstroLumina-Kubernetes")
 }
 
 # ============================================================
 module "rke2_control_plane" {
-  source = "./modules/kvm_vm"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
 
   vm_name            = "rke2-cp-01"
-  vcpu               = 2
-  memory_mb          = 4096
-  disk_gb            = 40
+  vcpu               = var.cp_vcpu
+  memory_mb          = var.cp_memory_mb
+  disk_gb            = var.cp_disk_gb
   ssh_username       = "ubuntu"
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
@@ -83,12 +123,12 @@ module "rke2_control_plane" {
 }
 
 module "rke2_worker_01" {
-  source = "./modules/kvm_vm"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
 
   vm_name            = "rke2-worker-01"
-  vcpu               = 2
-  memory_mb          = 3072
-  disk_gb            = 40
+  vcpu               = var.worker_vcpu
+  memory_mb          = var.worker_memory_mb
+  disk_gb            = var.worker_disk_gb
   ssh_username       = "ubuntu"
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
@@ -112,12 +152,12 @@ module "rke2_worker_01" {
 }
 
 module "rke2_worker_02" {
-  source = "./modules/kvm_vm"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
 
   vm_name            = "rke2-worker-02"
-  vcpu               = 2
-  memory_mb          = 3072
-  disk_gb            = 40
+  vcpu               = var.worker_vcpu
+  memory_mb          = var.worker_memory_mb
+  disk_gb            = var.worker_disk_gb
   ssh_username       = "ubuntu"
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
@@ -138,7 +178,7 @@ module "rke2_worker_02" {
 }
 
 # ============================================================
-# Outputs
+# Outputs (same names as the old single-root layout)
 # ============================================================
 output "vm_ips" {
   description = "IP-urile VM-urilor"

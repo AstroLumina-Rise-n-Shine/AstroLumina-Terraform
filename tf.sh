@@ -7,6 +7,20 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
+# Active environment (development/staging/production). A leading argument
+# matching an environment name selects it and is consumed; otherwise the
+# command runs against TF_ENV or the development default. Each environment
+# is a separate Terraform root with its own state, and a single laptop
+# runs one environment at a time (destroy the current one before applying
+# another -- names, MACs and IPs are identical across environments).
+ENVIRONMENTS_DIR="$SCRIPT_DIR/environments"
+ENV="${TF_ENV:-development}"
+if [[ "${1:-}" == "development" || "${1:-}" == "staging" || "${1:-}" == "production" ]]; then
+    ENV="$1"
+    shift
+fi
+TF_DIR="$ENVIRONMENTS_DIR/$ENV"
+
 # VM names
 VM_CP01="rke2-cp-01"
 VM_WORKER01="rke2-worker-01"
@@ -468,12 +482,12 @@ case $1 in
         check_packages
         ensure_network
         init_images
-		terraform init
+		terraform -chdir="$TF_DIR" init
         ;;
     "apply")
         export TF_VAR_tailscale_auth_key="$tailscale_auth_key"
         export TF_VAR_tailscale_suffix="$tailscale_suffix"
-        terraform apply -auto-approve || exit 1
+        terraform -chdir="$TF_DIR" apply -auto-approve || exit 1
         # After (re)builds the worker may have a new tailnet IP: wait for
         # readiness, then repoint the split-DNS zone so the tailnet name
         # keeps working from every device with no manual edits.
@@ -481,7 +495,7 @@ case $1 in
         dns_sync
         ;;
     "destroy")
-        terraform destroy -auto-approve
+        terraform -chdir="$TF_DIR" destroy -auto-approve
         ;;
     "start")
         start_vms
@@ -514,7 +528,12 @@ case $1 in
     *)
         echo "Terraform KVM/QEMU Helper"
         echo ""
-        echo "Usage: $0 [command]"
+        echo "Usage: $0 [environment] [command]"
+        echo ""
+        echo "Environment: development (default), staging, production."
+        echo "A leading environment name is consumed as selector; TF_ENV"
+        echo "overrides the default. Terraform runs with -chdir into"
+        echo "environments/<env>, which holds that env's own state file."
         echo ""
         echo "Commands:"
         echo "  init              - Download base images and initialize Terraform"
@@ -531,8 +550,10 @@ case $1 in
         echo ""
 
         echo "Examples:"
-        echo "  $0 init              # First time setup"
-        echo "  $0 apply             # Create VMs"
+        echo "  $0 init              # First time setup (development)"
+        echo "  $0 apply             # Create VMs (development)"
+        echo "  $0 staging apply     # Create VMs (staging)"
+        echo "  TF_ENV=production $0 apply  # Create VMs (production)"
         echo "  $0 wait              # Wait for cloud-init + tailscale (or: $0 apply && $0 wait)"
         echo "  $0 ips               # Get VM IPs"
         echo "  $0 recreate-network  # Recreate network with new DHCP reservations"
