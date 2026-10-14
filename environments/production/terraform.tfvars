@@ -10,3 +10,6 @@ cp_disk_gb   = 50
 worker_vcpu      = 2
 worker_memory_mb = 4096
 worker_disk_gb   = 50
+
+# Labeling: stamped on every VM at /etc/astrolumina-environment.
+environment = "production"

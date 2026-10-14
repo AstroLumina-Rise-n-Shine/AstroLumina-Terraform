@@ -82,6 +82,11 @@ variable "tailscale_suffix" {
   default     = ""
 }
 
+variable "environment" {
+  description = "Environment name for labeling (development, staging or production). Passed into every VM module call and stamped on the guest at /etc/astrolumina-environment -- set per env in terraform.tfvars."
+  type        = string
+}
+
 variable "cp_vcpu" {
   description = "Control-plane virtual CPUs"
   type        = number
@@ -123,7 +128,7 @@ locals {
 
 # ============================================================
 module "rke2_control_plane" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
 
   vm_name            = "rke2-cp-01"
   vcpu               = var.cp_vcpu
@@ -142,6 +147,8 @@ module "rke2_control_plane" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "control-plane"
     cluster = "rke2"
@@ -149,7 +156,7 @@ module "rke2_control_plane" {
 }
 
 module "rke2_worker_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
 
   vm_name            = "rke2-worker-01"
   vcpu               = var.worker_vcpu
@@ -171,6 +178,8 @@ module "rke2_worker_01" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "worker"
     cluster = "rke2"
@@ -178,7 +187,7 @@ module "rke2_worker_01" {
 }
 
 module "rke2_worker_02" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.0"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
 
   vm_name            = "rke2-worker-02"
   vcpu               = var.worker_vcpu
@@ -197,6 +206,8 @@ module "rke2_worker_02" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "worker"
     cluster = "rke2"
@@ -207,7 +218,7 @@ module "rke2_worker_02" {
 # Outputs (same names as the old single-root layout)
 # ============================================================
 output "vm_ips" {
-  description = "IP-urile VM-urilor"
+  description = "VM IP addresses"
   value = {
     control_plane = module.rke2_control_plane.ip_address
     worker_1      = module.rke2_worker_01.ip_address
@@ -216,34 +227,37 @@ output "vm_ips" {
 }
 
 output "vm_details" {
-  description = "Informații VM-uri"
+  description = "VM details"
   value = [
     {
-      name      = module.rke2_control_plane.vm_name
-      vcpu      = module.rke2_control_plane.vcpu
-      memory_mb = module.rke2_control_plane.memory_mb
-      disk_gb   = module.rke2_control_plane.disk_gb
-      role      = "control-plane"
+      name        = module.rke2_control_plane.vm_name
+      vcpu        = module.rke2_control_plane.vcpu
+      memory_mb   = module.rke2_control_plane.memory_mb
+      disk_gb     = module.rke2_control_plane.disk_gb
+      role        = "control-plane"
+      environment = var.environment
     },
     {
-      name      = module.rke2_worker_01.vm_name
-      vcpu      = module.rke2_worker_01.vcpu
-      memory_mb = module.rke2_worker_01.memory_mb
-      disk_gb   = module.rke2_worker_01.disk_gb
-      role      = "worker"
+      name        = module.rke2_worker_01.vm_name
+      vcpu        = module.rke2_worker_01.vcpu
+      memory_mb   = module.rke2_worker_01.memory_mb
+      disk_gb     = module.rke2_worker_01.disk_gb
+      role        = "worker"
+      environment = var.environment
     },
     {
-      name      = module.rke2_worker_02.vm_name
-      vcpu      = module.rke2_worker_02.vcpu
-      memory_mb = module.rke2_worker_02.memory_mb
-      disk_gb   = module.rke2_worker_02.disk_gb
-      role      = "worker"
+      name        = module.rke2_worker_02.vm_name
+      vcpu        = module.rke2_worker_02.vcpu
+      memory_mb   = module.rke2_worker_02.memory_mb
+      disk_gb     = module.rke2_worker_02.disk_gb
+      role        = "worker"
+      environment = var.environment
     }
   ]
 }
 
 output "ssh_connection_info" {
-  description = "Cum să te conectezi"
+  description = "How to connect over SSH"
   value = [
     "ssh ubuntu@${module.rke2_control_plane.ip_address}",
     "ssh ubuntu@${module.rke2_worker_01.ip_address}",

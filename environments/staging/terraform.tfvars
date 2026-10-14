@@ -10,3 +10,6 @@ cp_disk_gb   = 40
 worker_vcpu      = 2
 worker_memory_mb = 3072
 worker_disk_gb   = 40
+
+# Labeling: stamped on every VM at /etc/astrolumina-environment.
+environment = "staging"
