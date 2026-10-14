@@ -82,6 +82,11 @@ variable "tailscale_suffix" {
   default     = ""
 }
 
+variable "environment" {
+  description = "Environment name for labeling (development, staging or production). Passed into every VM module call and stamped on the guest at /etc/astrolumina-environment -- set per env in terraform.tfvars."
+  type        = string
+}
+
 variable "cp_vcpu" {
   description = "Control-plane virtual CPUs"
   type        = number
@@ -142,6 +147,8 @@ module "rke2_control_plane" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "control-plane"
     cluster = "rke2"
@@ -171,6 +178,8 @@ module "rke2_worker_01" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "worker"
     cluster = "rke2"
@@ -197,6 +206,8 @@ module "rke2_worker_02" {
   disk_pool       = "default"
   running         = true
 
+  environment = var.environment
+
   tags = {
     role    = "worker"
     cluster = "rke2"
@@ -219,25 +230,28 @@ output "vm_details" {
   description = "Informații VM-uri"
   value = [
     {
-      name      = module.rke2_control_plane.vm_name
-      vcpu      = module.rke2_control_plane.vcpu
-      memory_mb = module.rke2_control_plane.memory_mb
-      disk_gb   = module.rke2_control_plane.disk_gb
-      role      = "control-plane"
+      name        = module.rke2_control_plane.vm_name
+      vcpu        = module.rke2_control_plane.vcpu
+      memory_mb   = module.rke2_control_plane.memory_mb
+      disk_gb     = module.rke2_control_plane.disk_gb
+      role        = "control-plane"
+      environment = var.environment
     },
     {
-      name      = module.rke2_worker_01.vm_name
-      vcpu      = module.rke2_worker_01.vcpu
-      memory_mb = module.rke2_worker_01.memory_mb
-      disk_gb   = module.rke2_worker_01.disk_gb
-      role      = "worker"
+      name        = module.rke2_worker_01.vm_name
+      vcpu        = module.rke2_worker_01.vcpu
+      memory_mb   = module.rke2_worker_01.memory_mb
+      disk_gb     = module.rke2_worker_01.disk_gb
+      role        = "worker"
+      environment = var.environment
     },
     {
-      name      = module.rke2_worker_02.vm_name
-      vcpu      = module.rke2_worker_02.vcpu
-      memory_mb = module.rke2_worker_02.memory_mb
-      disk_gb   = module.rke2_worker_02.disk_gb
-      role      = "worker"
+      name        = module.rke2_worker_02.vm_name
+      vcpu        = module.rke2_worker_02.vcpu
+      memory_mb   = module.rke2_worker_02.memory_mb
+      disk_gb     = module.rke2_worker_02.disk_gb
+      role        = "worker"
+      environment = var.environment
     }
   ]
 }

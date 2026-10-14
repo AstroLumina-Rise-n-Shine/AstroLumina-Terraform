@@ -56,6 +56,16 @@ or `TF_ENV`): `./tf.sh production apply`, `./tf.sh staging destroy`.
 Columns are development / staging / production (see each
 `terraform.tfvars` — the only files that differ between environments).
 
+## Environment labeling
+
+Names, MACs and IPs can't differ between environments (see above), so the
+env travels as data instead: each `terraform.tfvars` sets `environment`,
+every VM module call receives it, and the guest carries it at
+`/etc/astrolumina-environment` (alongside the role/cluster tags). Check it
+with `ssh <vm> -- cat /etc/astrolumina-environment`, or read the `labels`
+output after apply. The EKS example in the Library repo labels natively
+with AWS tags (`Environment`, plus `Project`/`ManagedBy`).
+
 ## System Requirements (KVM/QEMU)
 
 ### Required packages
