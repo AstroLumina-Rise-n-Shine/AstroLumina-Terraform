@@ -218,7 +218,7 @@ module "rke2_worker_02" {
 # Outputs (same names as the old single-root layout)
 # ============================================================
 output "vm_ips" {
-  description = "IP-urile VM-urilor"
+  description = "VM IP addresses"
   value = {
     control_plane = module.rke2_control_plane.ip_address
     worker_1      = module.rke2_worker_01.ip_address
@@ -227,7 +227,7 @@ output "vm_ips" {
 }
 
 output "vm_details" {
-  description = "Informații VM-uri"
+  description = "VM details"
   value = [
     {
       name        = module.rke2_control_plane.vm_name
@@ -257,7 +257,7 @@ output "vm_details" {
 }
 
 output "ssh_connection_info" {
-  description = "Cum să te conectezi"
+  description = "How to connect over SSH"
   value = [
     "ssh ubuntu@${module.rke2_control_plane.ip_address}",
     "ssh ubuntu@${module.rke2_worker_01.ip_address}",
