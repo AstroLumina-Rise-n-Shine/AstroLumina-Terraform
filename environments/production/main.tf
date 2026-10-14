@@ -1,7 +1,8 @@
 # RKE2 cluster on KVM: thin environment root.
 #
 # This file is intentionally identical across development / staging /
-# production -- ONLY terraform.tfvars next to it differs. Shared logic
+# production -- ONLY the backend `key` below and terraform.tfvars next to
+# it differ. Shared logic
 # lives in the AstroLumina-Terraform-Library `kvm_vm` module; each
 # environment gets its own state file, so apply/destroy here never touches
 # the other two. Rule of the lab: a single laptop runs ONE environment at
@@ -15,6 +16,31 @@ terraform {
       source  = "dmacvicar/libvirt"
       version = "~> 0.9"
     }
+  }
+
+  # Remote state in Floci-emulated S3 (+ DynamoDB locking). Keep this block
+  # IDENTICAL across environments except `key`: one state object per
+  # environment, one shared lock table (LockIDs are per state key).
+  # (dynamodb_table is deprecated upstream in favor of use_lockfile, but kept
+  # deliberately: DynamoDB locking is the required design here.)
+  backend "s3" {
+    bucket = "astrolumina-terraform-state"
+    key    = "production/terraform.tfstate"
+    region = "us-east-1"
+
+    # Floci local endpoint (same emulator the AWS provider wiring uses).
+    endpoints = {
+      s3       = "http://localhost:4566"
+      dynamodb = "http://localhost:4566"
+    }
+    access_key                  = "test"
+    secret_key                  = "test"
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    use_path_style              = true
+    dynamodb_table              = "terraform-state-locks"
   }
 }
 
