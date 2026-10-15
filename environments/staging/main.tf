@@ -129,7 +129,7 @@ locals {
 
 # ============================================================
 module "rke2_control_plane" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-cp-01"
   vcpu               = var.cp_vcpu
@@ -157,7 +157,7 @@ module "rke2_control_plane" {
 }
 
 module "rke2_worker_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-worker-01"
   vcpu               = var.worker_vcpu
@@ -188,7 +188,7 @@ module "rke2_worker_01" {
 }
 
 module "rke2_worker_02" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-worker-02"
   vcpu               = var.worker_vcpu
