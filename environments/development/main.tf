@@ -18,11 +18,10 @@ terraform {
     }
   }
 
-  # Remote state in Floci-emulated S3 (+ DynamoDB locking). Keep this block
-  # IDENTICAL across environments except `key`: one state object per
-  # environment, one shared lock table (LockIDs are per state key).
-  # (dynamodb_table is deprecated upstream in favor of use_lockfile, but kept
-  # deliberately: DynamoDB locking is the required design here.)
+  # Remote state in Floci-emulated S3 with S3-native locking (a `.tflock`
+  # object next to each state key, via conditional writes -- no DynamoDB).
+  # Keep this block IDENTICAL across environments except `key`: one state
+  # object + one lock object per environment.
   backend "s3" {
     bucket = "astrolumina-terraform-state"
     key    = "development/terraform.tfstate"
@@ -40,7 +39,9 @@ terraform {
     skip_region_validation      = true
     skip_requesting_account_id  = true
     use_path_style              = true
-    dynamodb_table              = "terraform-state-locks"
+    # S3-native state locking (needs Terraform >= 1.10). Replaces the old
+    # `dynamodb_table` mechanism; the two are mutually exclusive.
+    use_lockfile = true
   }
 }
 
@@ -128,7 +129,7 @@ locals {
 
 # ============================================================
 module "rke2_control_plane" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-cp-01"
   vcpu               = var.cp_vcpu
@@ -156,7 +157,7 @@ module "rke2_control_plane" {
 }
 
 module "rke2_worker_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-worker-01"
   vcpu               = var.worker_vcpu
@@ -187,7 +188,7 @@ module "rke2_worker_01" {
 }
 
 module "rke2_worker_02" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.1"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/kvm_vm?ref=1.0.2"
 
   vm_name            = "rke2-worker-02"
   vcpu               = var.worker_vcpu

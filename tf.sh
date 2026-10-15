@@ -501,8 +501,10 @@ ensure_network() {
     fi
 }
 
-# Ensure the Floci-emulated S3 bucket + DynamoDB lock table used for remote
-# state exist (idempotent: creates only what is missing). Fails loudly when
+# Ensure the Floci-emulated S3 bucket used for remote state exists
+# (idempotent: creates only what is missing). Also removes the leftover
+# DynamoDB lock table from the old `dynamodb_table` locking era -- locking
+# is S3-native now (.tflock objects), the table is unused. Fails loudly when
 # Floci is not running or the AWS CLI is absent -- remote state cannot work
 # without them, and failing here beats a cryptic backend error from init.
 ensure_state_backend() {
@@ -522,11 +524,11 @@ ensure_state_backend() {
     else
         echo "S3 state bucket already exists"
     fi
-    if ! aws --endpoint-url "$endpoint" dynamodb describe-table --table-name terraform-state-locks &>/dev/null; then
-        echo "Creating DynamoDB lock table..."
-        aws --endpoint-url "$endpoint" dynamodb create-table --table-name terraform-state-locks --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST --region us-east-1 || return 1
+    if aws --endpoint-url "$endpoint" dynamodb describe-table --table-name terraform-state-locks &>/dev/null; then
+        echo "Removing leftover DynamoDB lock table (locking is S3-native now)..."
+        aws --endpoint-url "$endpoint" dynamodb delete-table --table-name terraform-state-locks --region us-east-1 || return 1
     else
-        echo "DynamoDB lock table already exists"
+        echo "No leftover DynamoDB lock table"
     fi
 }
 
