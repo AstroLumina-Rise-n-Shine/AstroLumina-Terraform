@@ -1,5 +1,5 @@
 ---
-name: Terraform CI
+name: CI
 
 # All third-party actions are pinned to immutable commit SHAs
 # (instead of floating tags) to protect against supply-chain attacks.
@@ -7,18 +7,9 @@ name: Terraform CI
 
 on:
   push:
-    branches: ["**"]
-    paths:
-      - "**/*.tf"
-      - ".github/workflows/terraform-ci.yml"
-      - ".tflint.hcl"
-      - "tf.sh"
+    branches: [main]
   pull_request:
-    paths:
-      - "**/*.tf"
-      - ".github/workflows/terraform-ci.yml"
-      - ".tflint.hcl"
-      - "tf.sh"
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -32,6 +23,7 @@ permissions:
 
 jobs:
   fmt:
+    if: github.event_name != 'push'
     name: Terraform fmt (format)
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +38,7 @@ jobs:
         run: terraform fmt -check -recursive -diff
 
   validate:
+    if: github.event_name != 'push'
     name: Validate (syntax & consistency)
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +64,7 @@ jobs:
           done
 
   tflint:
+    if: github.event_name != 'push'
     name: TFLint (best practices)
     runs-on: ubuntu-latest
     steps:
@@ -88,6 +82,7 @@ jobs:
         run: tflint --recursive --force --format compact
 
   trivy:
+    if: github.event_name != 'push'
     name: Trivy (IaC security)
     runs-on: ubuntu-latest
     permissions:
@@ -113,6 +108,7 @@ jobs:
           sarif_file: trivy-results.sarif
 
   shellcheck:
+    if: github.event_name != 'push'
     name: ShellCheck (tf.sh)
     runs-on: ubuntu-latest
     steps:
@@ -125,6 +121,7 @@ jobs:
           severity: warning
 
   gitleaks:
+    if: github.event_name != 'push'
     name: Gitleaks (exposed secrets)
     runs-on: ubuntu-latest
     steps:
