@@ -1,5 +1,5 @@
 ---
-name: Terraform CI
+name: CI
 
 # All third-party actions are pinned to immutable commit SHAs
 # (instead of floating tags) to protect against supply-chain attacks.
@@ -7,18 +7,9 @@ name: Terraform CI
 
 on:
   push:
-    branches: ["**"]
-    paths:
-      - "**/*.tf"
-      - ".github/workflows/terraform-ci.yml"
-      - ".tflint.hcl"
-      - "tf.sh"
+    branches: [main]
   pull_request:
-    paths:
-      - "**/*.tf"
-      - ".github/workflows/terraform-ci.yml"
-      - ".tflint.hcl"
-      - "tf.sh"
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -32,6 +23,7 @@ permissions:
 
 jobs:
   fmt:
+    if: github.event_name != 'push'
     name: Terraform fmt (format)
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +38,7 @@ jobs:
         run: terraform fmt -check -recursive -diff
 
   validate:
+    if: github.event_name != 'push'
     name: Validate (syntax & consistency)
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +64,7 @@ jobs:
           done
 
   tflint:
+    if: github.event_name != 'push'
     name: TFLint (best practices)
     runs-on: ubuntu-latest
     steps:
@@ -88,6 +82,7 @@ jobs:
         run: tflint --recursive --force --format compact
 
   trivy:
+    if: github.event_name != 'push'
     name: Trivy (IaC security)
     runs-on: ubuntu-latest
     permissions:
@@ -108,11 +103,12 @@ jobs:
 
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@87ef0dc97def48aa960fbf026a2563ee9dbdb470 # v3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: trivy-results.sarif
 
   shellcheck:
+    if: github.event_name != 'push'
     name: ShellCheck (tf.sh)
     runs-on: ubuntu-latest
     steps:
@@ -125,6 +121,7 @@ jobs:
           severity: warning
 
   gitleaks:
+    if: github.event_name != 'push'
     name: Gitleaks (exposed secrets)
     runs-on: ubuntu-latest
     steps:
@@ -151,3 +148,24 @@ jobs:
   # provider requires local KVM/QEMU (see README + tf.sh), which is
   # unavailable on GitHub-hosted runners. Syntax validation + TFLint +
   # Trivy cover everything that can be checked statically.
+
+  semgrep:
+    if: github.event_name == 'pull_request'
+    name: Semgrep OSS
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.182.0
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run Semgrep
+        id: semgrep
+        run: semgrep --config p/default --jobs 1 --sarif --output=semgrep.sarif
+      - name: Upload SARIF to GitHub
+        if: always() && steps.semgrep.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
