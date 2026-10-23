@@ -148,3 +148,24 @@ jobs:
   # provider requires local KVM/QEMU (see README + tf.sh), which is
   # unavailable on GitHub-hosted runners. Syntax validation + TFLint +
   # Trivy cover everything that can be checked statically.
+
+  semgrep:
+    if: github.event_name == 'pull_request'
+    name: Semgrep OSS
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.182.0
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run Semgrep
+        id: semgrep
+        run: semgrep --config p/default --jobs 1 --sarif --output=semgrep.sarif
+      - name: Upload SARIF to GitHub
+        if: always() && steps.semgrep.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@87ef0dc97def48aa960fbf026a2563ee9dbdb470 # v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
