@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@87ef0dc97def48aa960fbf026a2563ee9dbdb470 # v3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: trivy-results.sarif
 
@@ -165,7 +165,7 @@ jobs:
         run: semgrep --config p/default --jobs 1 --sarif --output=semgrep.sarif
       - name: Upload SARIF to GitHub
         if: always() && steps.semgrep.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@87ef0dc97def48aa960fbf026a2563ee9dbdb470 # v3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
