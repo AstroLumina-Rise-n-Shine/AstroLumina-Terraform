@@ -97,10 +97,30 @@ fi
 # -------------------------------------------------------
 # Shared credentials / constants (read from .env when present, never committed)
 # -------------------------------------------------------
-TAILSCALE_TAILNET="${TAILSCALE_TAILNET}"
-TAILSCALE_DNS="${TAILSCALE_DNS}"
-TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY}"
-TAILSCALE_API_TOKEN="${TAILSCALE_API_TOKEN}"
+
+# Validate Tailscale variables are set (no defaults)
+ensure_tailscale_vars() {
+    local missing=()
+
+    [[ -z "${TAILSCALE_AUTH_KEY:-}" ]]    && missing+=("TAILSCALE_AUTH_KEY")
+    [[ -z "${TAILSCALE_DNS:-}" ]]         && missing+=("TAILSCALE_DNS")
+    [[ -z "${TAILSCALE_TAILNET:-}" ]]     && missing+=("TAILSCALE_TAILNET")
+    [[ -z "${TAILSCALE_API_TOKEN:-}" ]]   && missing+=("TAILSCALE_API_TOKEN")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "ERROR: Missing required Tailscale environment variables:" >&2
+        for v in "${missing[@]}"; do
+            echo "  - $v" >&2
+        done
+        echo "" >&2
+        echo "Set them before running, e.g.:" >&2
+        echo "  export TAILSCALE_AUTH_KEY=\"...\"" >&2
+        echo "  export TAILSCALE_DNS=\"...\"" >&2
+        echo "  export TAILSCALE_TAILNET=\"...\"  # or \"-\" for default" >&2
+        echo "  export TAILSCALE_API_TOKEN=\"...\"" >&2
+        return 1
+    fi
+}
 
 SSH_USER="ubuntu"
 WAIT_INTERVAL=10
@@ -149,12 +169,12 @@ ensure_pm_creds() {
         done
         echo "" >&2
         echo "Set them before running, e.g.:" >&2
-        echo "  export PM_API_URL=\"https://192.168.100.200:8006/\"" >&2
-        echo "  export PM_USER=\"root@pam\"" >&2
-        echo "  export PM_PASSWD=\"<root-password>\"" >&2
-        echo "  export PM_NODE=\"danel\"" >&2
-        echo "  export PM_API_TOKEN_ID=\"root@pam!ProxmoxRoot=<UUID>\"" >&2
-        echo "  export PM_API_TOKEN_SECRET=\"<api-token-secret>\"" >&2
+        echo "  export PM_API_URL=\"...\"" >&2
+        echo "  export PM_USER=\"...\"" >&2
+        echo "  export PM_PASSWD=\"...\"" >&2
+        echo "  export PM_NODE=\"...\"" >&2
+        echo "  export PM_API_TOKEN_ID=\"...\"" >&2
+        echo "  export PM_API_TOKEN_SECRET=\"...\"" >&2
         echo "" >&2
         echo "Create the API token in Proxmox UI: Datacenter → Permissions → API Tokens → Add" >&2
         return 1
@@ -403,6 +423,8 @@ wait_all_vms() {
 # in tf.sh (lines 231-362) for the full rationale — identity verification happens
 # twice (hostname exact-match + pairwise distinctness) before any state change.
 tailscale_start() {
+    ensure_tailscale_vars || return 1
+
     local timeout="${1:-$WAIT_TIMEOUT_DEFAULT}"
     local deadline failed=0
     deadline=$(( $(date +%s) + timeout ))
@@ -512,11 +534,11 @@ ensure_state_backend() {
         done
         echo "" >&2
         echo "Set them before running, e.g.:" >&2
-        echo "  export FLOCI_ENDPOINT=\"http://192.168.100.50:4566\"" >&2
-        echo "  export AWS_ACCESS_KEY_ID=\"test\"" >&2
-        echo "  export AWS_SECRET_ACCESS_KEY=\"test\"" >&2
-        echo "  export AWS_DEFAULT_REGION=\"us-east-1\"" >&2
-        echo "  export AWS_EC2_METADATA_DISABLED=\"true\"" >&2
+        echo "  export FLOCI_ENDPOINT=\"...\"" >&2
+        echo "  export AWS_ACCESS_KEY_ID=\"...\"" >&2
+        echo "  export AWS_SECRET_ACCESS_KEY=\"...\"" >&2
+        echo "  export AWS_DEFAULT_REGION=\"...\"" >&2
+        echo "  export AWS_EC2_METADATA_DISABLED=\"...\"" >&2
         return 1
     fi
 
@@ -929,6 +951,7 @@ case ${1:-} in
         terraform -chdir="$TF_DIR" validate
         ;;
     "apply")
+        ensure_tailscale_vars || exit 1
         export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
         export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
@@ -936,6 +959,7 @@ case ${1:-} in
         wait_all_vms "${2:-$WAIT_TIMEOUT_DEFAULT}" || exit 1
         ;;
     "plan")
+        ensure_tailscale_vars || exit 1
         export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
         export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
