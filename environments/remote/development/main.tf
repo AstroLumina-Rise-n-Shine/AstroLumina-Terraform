@@ -16,6 +16,9 @@ locals {
   ip_cp = "192.168.100.210"
   ip_w1 = "192.168.100.211"
   ip_w2 = "192.168.100.212"
+
+  # Template name derived from ubuntu_version (e.g., ubuntu-24.04-cloudinit-template)
+  pm_template = "ubuntu-${var.ubuntu_version}-cloudinit-template"
 }
 
 # ============================================================
@@ -39,7 +42,7 @@ module "rke2_cp_01" {
   pm_network_bridge = var.pm_network_bridge
   pm_ssh_user       = var.pm_ssh_user
   pm_password       = var.pm_password
-  pm_template       = var.pm_template
+  pm_template       = local.pm_template
 
   ipv4_address = "${local.ip_cp}/${local.lan_prefix}"
   ipv4_gateway = local.lan_gateway
@@ -71,7 +74,7 @@ module "rke2_wk_01" {
   pm_network_bridge = var.pm_network_bridge
   pm_ssh_user       = var.pm_ssh_user
   pm_password       = var.pm_password
-  pm_template       = var.pm_template
+  pm_template       = local.pm_template
 
   ipv4_address = "${local.ip_w1}/${local.lan_prefix}"
   ipv4_gateway = local.lan_gateway
@@ -103,7 +106,7 @@ module "rke2_wk_02" {
   pm_network_bridge = var.pm_network_bridge
   pm_ssh_user       = var.pm_ssh_user
   pm_password       = var.pm_password
-  pm_template       = var.pm_template
+  pm_template       = local.pm_template
 
   ipv4_address = "${local.ip_w2}/${local.lan_prefix}"
   ipv4_gateway = local.lan_gateway

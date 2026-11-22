@@ -83,9 +83,25 @@ TF_DIR="$ENVIRONMENTS_DIR/$ENV"
 
 # -------------------------------------------------------
 # Ubuntu version selection (24.04 | 26.04)
-# Default: 24.04. Can be set via TF_UBUNTU_VERSION env var or --ubuntu-version CLI arg.
+# Priority: --ubuntu-version CLI arg > TF_UBUNTU_VERSION env var > tfvars file > default (24.04)
 # -------------------------------------------------------
-UBUNTU_VERSION="${TF_UBUNTU_VERSION:-24.04}"
+# Read ubuntu_version from tfvars file if it exists (for current platform/env)
+read_tfvars_ubuntu_version() {
+    local tfvars_file="$TF_DIR/variables.tfvars"
+    if [[ -f "$tfvars_file" ]]; then
+        # Extract ubuntu_version = "X.YY" from tfvars (handles spaces, quotes)
+        local val
+        val=$(grep -E '^\s*ubuntu_version\s*=' "$tfvars_file" | head -1 | sed -E 's/.*=\s*"?([^"#]+)"?.*/\1/' | xargs)
+        if [[ -n "$val" && ("$val" == "24.04" || "$val" == "26.04") ]]; then
+            echo "$val"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+TFVARS_UBUNTU_VERSION=$(read_tfvars_ubuntu_version) || TFVARS_UBUNTU_VERSION=""
+UBUNTU_VERSION="${TF_UBUNTU_VERSION:-${TFVARS_UBUNTU_VERSION:-24.04}}"
 
 # Parse --ubuntu-version flag early and remove it from args
 UBUNTU_ARGS=()
@@ -169,11 +185,29 @@ WAIT_INTERVAL=10
 WAIT_TIMEOUT_DEFAULT=600
 
 # Per-platform LAN addressing ground truth
+# For local: read from tfvars (with fallback to defaults matching network.xml)
+# For remote: hardcoded to match remote tfvars (192.168.100.0/24)
+
+read_tfvars_ip() {
+    local tfvars_file="$TF_DIR/variables.tfvars"
+    local var_name="$1"
+    local default_val="$2"
+    if [[ -f "$tfvars_file" ]]; then
+        local val
+        val=$(grep -E "^\s*${var_name}\s*=" "$tfvars_file" | head -1 | sed -E 's/.*=\s*"?([^"#]+)"?.*/\1/' | xargs)
+        if [[ -n "$val" ]]; then
+            echo "$val"
+            return 0
+        fi
+    fi
+    echo "$default_val"
+}
+
 if [[ "$PLATFORM" == "local" ]]; then
     # Libvirt NAT network (configs/local/network.xml); static reservations match MODULE calls below.
-    VM_CP_01_IP="192.168.200.210"
-    VM_WK_01_IP="192.168.200.211"
-    VM_WK_02_IP="192.168.200.212"
+    VM_CP_01_IP=$(read_tfvars_ip "ip_cp" "192.168.200.210")
+    VM_WK_01_IP=$(read_tfvars_ip "ip_w1" "192.168.200.211")
+    VM_WK_02_IP=$(read_tfvars_ip "ip_w2" "192.168.200.212")
 else
     # Proxmox PVE bridge (vmbr0 on 192.168.100.0/24). IPs set via cloud-init in modules/qm_vm.
     VM_CP_01_IP="192.168.100.210"
@@ -413,10 +447,10 @@ wait_ssh() {
     done
 }
 
-# Wait for a single VM: cloud-init done + tailscale up (100.x IP). Returns 0 on success.
+# Wait for a single VM: cloud-init done + apt upgrade + tailscale up. Returns 0 on success.
 wait_one_vm() {
-    local name="$1" ip="$2" deadline="$3" ci ts_ip now
-    echo "==> ${name} (${ip}): waiting for cloud-init + tailscale..."
+    local name="$1" ip="$2" deadline="$3" ci ts_ip now apt_status
+    echo "==> ${name} (${ip}): waiting for cloud-init (incl. apt upgrade) + tailscale..."
     while true; do
         now=$(date +%s)
         if (( now >= deadline )); then
@@ -425,24 +459,41 @@ wait_one_vm() {
         fi
         if ! ssh_vm "$ip" "true" 2>/dev/null; then
             echo "    ... SSH unavailable, retrying in ${WAIT_INTERVAL}s"
-            sleep "$WAIT_INTERVAL"
+            sleep "${WAIT_INTERVAL}"
             continue
         fi
         ci=$(ssh_vm "$ip" "cloud-init status 2>/dev/null" || true)
         if ! echo "$ci" | grep -q ": done"; then
             echo "    ... cloud-init: ${ci:-unknown}"
-            sleep "$WAIT_INTERVAL"
+            sleep "${WAIT_INTERVAL}"
             continue
         fi
-        ts_ip=$(ssh_vm "$ip" "tailscale ip -4 2>/dev/null" | head -1 || true)
-        if echo "$ts_ip" | grep -qE '^100\.'; then
-            echo "OK: ${name} cloud-init done, tailscale ${ts_ip}"
-            return 0
+        # cloud-init done - verify apt upgrade completed (no pending upgrades)
+        apt_status=$(ssh_vm "$ip" "apt list --upgradable 2>/dev/null | grep -c ^" || true)
+        if [[ "${apt_status:-0}" -gt 1 ]]; then
+            echo "    ... cloud-init done but apt upgrades still pending, waiting..."
+            sleep "${WAIT_INTERVAL}"
+            continue
         fi
-        echo "    ... cloud-init done, tailscale not up yet"
-        sleep "$WAIT_INTERVAL"
+        # Verify tailscale is up and authenticated
+        ts_ip=$(ssh_vm "$ip" "tailscale ip -4 2>/dev/null" | head -1 || true)
+        if echo "$ts_ip" | grep -qE "^100\."; then
+            # Verify tailscale status command succeeds (means fully authenticated and up)
+            if ssh_vm "$ip" "tailscale status 2>/dev/null | grep -q '100\.'"; then
+                echo "OK: ${name} cloud-init done (apt upgraded), tailscale ${ts_ip} (status: active)"
+                return 0
+            fi
+            echo "    ... tailscale IP ${ts_ip} but status not fully active, waiting..."
+            sleep "${WAIT_INTERVAL}"
+            continue
+        fi
+        echo "    ... cloud-init done, apt upgraded, tailscale not up yet"
+        sleep "${WAIT_INTERVAL}"
     done
 }
+
+
+
 
 # Wait for all VMs. Usage: wait_all_vms [timeout_seconds]
 wait_all_vms() {
@@ -839,6 +890,8 @@ _create_cloudinit_template_on_host() {
     local template_name="ubuntu-${ubuntu_ver}-cloudinit-template"
     local iso_name="ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img"
     local iso_url="https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/${iso_name}"
+    # Use PM_STORAGE (default: local) for both cloud-init ISO and disk import
+    local pm_storage="${PM_STORAGE:-local}"
 
     # Build an SSH command string once; used by each remote step.
     local ssh_base="ssh -o BatchMode=yes -o ConnectTimeout=60 -o StrictHostKeyChecking=no ${host}"
@@ -870,12 +923,13 @@ echo "[setup] creating VM 9000 ..."
     --scsihw virtio-scsi-single' \
     || { echo "  qm create failed" >&2; exit 1; }
 
-echo "[setup] importing disk to local-lvm ..."
-\${SSH} 'qm importdisk 9000 /tmp/${iso_name} local-lvm && rm -f /tmp/${iso_name}' \
+echo "[setup] importing disk to ${pm_storage} ..."
+\${SSH} 'qm importdisk 9000 /tmp/${iso_name} ${pm_storage} && rm -f /tmp/${iso_name}' \
     || { echo "  importdisk failed" >&2; exit 1; }
 
 echo "[setup] configuring cloud-init CD, serial console, boot order, template ..."
-\${SSH} 'qm set 9000 --ide2 local:cloudinit && \
+\${SSH} 'qm set 9000 --ide2 ${pm_storage}:cloudinit && \
+    qm set 9000 --scsi0 ${pm_storage}:vm-9000-disk-0 && \
     qm set 9000 --boot order=scsi0 && \
     qm set 9000 --serial0 socket --vga serial0 && \
     qm template 9000 && \

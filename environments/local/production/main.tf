@@ -5,11 +5,8 @@
 # All outputs are in outputs.tf
 
 locals {
-  # Names, MACs and LAN IPs are identical in every environment on purpose:
-  # tf.sh, the Tailscale hostnames and the Kubernetes node names all rely
-  # on them, and a single laptop runs one environment at a time anyway.
-  # Only sizing differs per environment (see variables.tfvars).
-  ubuntu_image_path = "/var/lib/libvirt/images/ubuntu-24.04.qcow2"
+  # Ubuntu base image path (dynamic based on ubuntu_version variable)
+  ubuntu_image_path = "/var/lib/libvirt/images/ubuntu-${var.ubuntu_version}.qcow2"
   k8s_share_path    = var.k8s_repo_host_path != null ? var.k8s_repo_host_path : abspath("${path.module}/../../../AstroLumina-Kubernetes")
 }
 
@@ -27,7 +24,10 @@ module "rke2_cp_01" {
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
   tailscale_auth_key = var.tailscale_auth_key
-  mac_address        = "52:54:00:a1:b2:c3"
+  # Static IP via cloud-init (no MAC dependency)
+  ipv4_address = "${var.ip_cp}/${var.lan_prefix}"
+  ipv4_gateway = var.lan_gateway
+  nameservers  = var.nameservers
 
   host_share_path = local.k8s_share_path
 
@@ -55,8 +55,10 @@ module "rke2_wk_01" {
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
   tailscale_auth_key = var.tailscale_auth_key
-  mac_address        = "52:54:00:d1:e2:f3"
-
+  # Static IP via cloud-init (no MAC dependency)
+  ipv4_address = "${var.ip_w1}/${var.lan_prefix}"
+  ipv4_gateway = var.lan_gateway
+  nameservers  = var.nameservers
 
   host_share_path = local.k8s_share_path
 
@@ -84,7 +86,10 @@ module "rke2_wk_02" {
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
   tailscale_auth_key = var.tailscale_auth_key
-  mac_address        = "52:54:00:aa:bb:cc"
+  # Static IP via cloud-init (no MAC dependency)
+  ipv4_address = "${var.ip_w2}/${var.lan_prefix}"
+  ipv4_gateway = var.lan_gateway
+  nameservers  = var.nameservers
 
   host_share_path = local.k8s_share_path
 

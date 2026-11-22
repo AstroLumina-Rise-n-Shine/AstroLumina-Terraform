@@ -11,5 +11,19 @@ worker_memory_mb = 4096
 worker_disk_gb   = 30
 
 # Labeling: stamped on every VM at /etc/astrolumina-environment.
-environment = "local-staging"
-tailscale_dns = ""
+environment   = "local-staging"
+tailscale_dns = "tarpan-mimosa.ts.net"
+
+# ============================================================
+# Network configuration (static IPs via cloud-init)
+# ============================================================
+lan_prefix  = 24
+lan_gateway = "192.168.200.1"
+nameservers = "1.1.1.1,8.8.8.8"
+
+ip_cp = "192.168.200.210"
+ip_w1 = "192.168.200.211"
+ip_w2 = "192.168.200.212"
+
+# Ubuntu version for base image (24.04 or 26.04)
+ubuntu_version = "24.04"

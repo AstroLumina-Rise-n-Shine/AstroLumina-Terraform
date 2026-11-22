@@ -67,3 +67,53 @@ variable "worker_disk_gb" {
   description = "Worker OS disk in GB (both workers)"
   type        = number
 }
+
+# ============================================================
+# Network configuration (moved from locals to variables)
+# ============================================================
+variable "lan_prefix" {
+  description = "LAN subnet prefix length (e.g., 24 for /24)"
+  type        = number
+  default     = 24
+}
+
+variable "lan_gateway" {
+  description = "LAN gateway IP address"
+  type        = string
+  default     = "192.168.200.1"
+}
+
+variable "nameservers" {
+  description = "Comma-separated DNS nameservers for cloud-init"
+  type        = string
+  default     = "1.1.1.1,8.8.8.8"
+}
+
+variable "ip_cp" {
+  description = "Control-plane static IP address (no CIDR suffix)"
+  type        = string
+  default     = "192.168.200.210"
+}
+
+variable "ip_w1" {
+  description = "Worker-1 static IP address (no CIDR suffix)"
+  type        = string
+  default     = "192.168.200.211"
+}
+
+variable "ip_w2" {
+  description = "Worker-2 static IP address (no CIDR suffix)"
+  type        = string
+  default     = "192.168.200.212"
+}
+
+# Ubuntu version for base image (24.04 or 26.04)
+variable "ubuntu_version" {
+  description = "Ubuntu LTS version for base image (24.04 or 26.04)"
+  type        = string
+  default     = "24.04"
+  validation {
+    condition     = contains(["24.04", "26.04"], var.ubuntu_version)
+    error_message = "ubuntu_version must be '24.04' or '26.04'."
+  }
+}

@@ -9,11 +9,11 @@ cp_vcpu      = 2
 cp_memory_mb = 3072
 cp_disk_gb   = 30
 
-worker_vcpu      = 2
+worker_vcpu      = 3
 worker_memory_mb = 4096
 worker_disk_gb   = 30
 
-environment      = "remote-staging"
+environment   = "remote-staging"
 tailscale_dns = ""
 
 # -------------------------------------------------------

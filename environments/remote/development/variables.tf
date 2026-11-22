@@ -111,3 +111,14 @@ variable "pm_template" {
   type        = string
   default     = "ubuntu-24.04-cloudinit-template"
 }
+
+# Ubuntu version for base image / template (24.04 or 26.04)
+variable "ubuntu_version" {
+  description = "Ubuntu LTS version for base image / template (24.04 or 26.04)"
+  type        = string
+  default     = "24.04"
+  validation {
+    condition     = contains(["24.04", "26.04"], var.ubuntu_version)
+    error_message = "ubuntu_version must be '24.04' or '26.04'."
+  }
+}

@@ -9,12 +9,15 @@ cp_vcpu      = 2
 cp_memory_mb = 3072
 cp_disk_gb   = 30
 
-worker_vcpu      = 2
+worker_vcpu      = 3
 worker_memory_mb = 4096
 worker_disk_gb   = 30
 
-environment      = "remote-development"
-tailscale_dns = ""
+environment   = "remote-development"
+tailscale_dns = "tarpan-mimosa.ts.net"
+
+# Ubuntu version for base image / template (24.04 or 26.04)
+ubuntu_version = "24.04"
 
 # -------------------------------------------------------
 # Proxmox host pointers (match your lab)
