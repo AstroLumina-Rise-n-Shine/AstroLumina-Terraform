@@ -81,6 +81,48 @@ if [[ ! -d "$ENVIRONMENTS_DIR/$ENV" ]]; then
 fi
 TF_DIR="$ENVIRONMENTS_DIR/$ENV"
 
+# -------------------------------------------------------
+# Ubuntu version selection (24.04 | 26.04)
+# Default: 24.04. Can be set via TF_UBUNTU_VERSION env var or --ubuntu-version CLI arg.
+# -------------------------------------------------------
+UBUNTU_VERSION="${TF_UBUNTU_VERSION:-24.04}"
+
+# Parse --ubuntu-version flag early and remove it from args
+UBUNTU_ARGS=()
+i=1
+while [[ $i -le $# ]]; do
+    arg="${!i}"
+    case "$arg" in
+        --ubuntu-version=*)
+            UBUNTU_VERSION="${arg#*=}"
+            ;;
+        --ubuntu-version)
+            i=$((i+1))
+            if [[ $i -le $# ]]; then
+                UBUNTU_VERSION="${!i}"
+            else
+                echo "ERROR: --ubuntu-version requires a value" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            UBUNTU_ARGS+=("$arg")
+            ;;
+    esac
+    i=$((i+1))
+done
+
+# Restore positional parameters without the --ubuntu-version flag
+set -- "${UBUNTU_ARGS[@]}"
+
+# Validate version
+if [[ "$UBUNTU_VERSION" != "24.04" && "$UBUNTU_VERSION" != "26.04" ]]; then
+    echo "ERROR: Unsupported Ubuntu version: '$UBUNTU_VERSION'. Supported: 24.04, 26.04" >&2
+    exit 1
+fi
+# Derive version without dots for template/image names
+UBUNTU_VERSION_NODOT="${UBUNTU_VERSION/./}"
+
 # VM names (kept in sync with main.tf) — distinct per platform
 # local:  rke2-lbvrt-cp-01 / rke2-lbvrt-wk-01 / rke2-lbvrt-wk-02
 # remote: rke2-qm-cp-01   / rke2-qm-wk-01   / rke2-qm-wk-02
@@ -249,23 +291,22 @@ init_images() {
         echo "images: N/A on remote (Proxmox manages templates/storage pools)."
         return 0
     fi
-    ubuntu_version="24.04"
     libvirt_img_path="/var/lib/libvirt/images"
-    base_image="${libvirt_img_path}/ubuntu-${ubuntu_version}-server-cloudimg-amd64.img"
-    base_image_url="https://cloud-images.ubuntu.com/releases/${ubuntu_version}/release/ubuntu-${ubuntu_version}-server-cloudimg-amd64.img"
+    base_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
+    base_image_url="https://cloud-images.ubuntu.com/releases/${UBUNTU_VERSION}/release/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
 
     if [[ ! -f "$base_image" ]]; then
         echo "Base image not found at $base_image"
-        echo "Downloading..."
+        echo "Downloading Ubuntu ${UBUNTU_VERSION}..."
         sudo wget -O "$base_image" "$base_image_url"
         sudo chmod 644 "$base_image"
         sudo chown libvirt-qemu:kvm "$base_image"
         echo "...Download complete"
     fi
 
-    qcow2_image="${libvirt_img_path}/ubuntu-${ubuntu_version}.qcow2"
+    qcow2_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}.qcow2"
     if [[ ! -f "$qcow2_image" ]]; then
-        echo "Ubuntu QCOW2 image not found at $qcow2_image"
+        echo "Ubuntu ${UBUNTU_VERSION} QCOW2 image not found at $qcow2_image"
         echo "Converting IMG to QCOW2..."
         sudo qemu-img convert -O qcow2 "$base_image" "$qcow2_image"
         sudo chmod 644 "$qcow2_image"
@@ -580,7 +621,7 @@ status_vms() {
 #
 # Usage: ./tf.sh [platform] [env] init-pve [--auto-create-template]
 #   --auto-create-template : if the cloud-init template doesn't exist,
-#     download Ubuntu 24.04 cloud image and create it via qm commands on
+#     download Ubuntu ${UBUNTU_VERSION} cloud image and create it via qm commands on
 #     the Proxmox node (requires SSH access with root key auth).
 #
 # This command does NOT modify any VMs or templates unless --auto-create-template
@@ -592,7 +633,7 @@ status_vms() {
 #      (or PM_USER / PM_PASSWD for basic auth)
 #   C) Storage pool 'local' — default on PVE
 #   D) Bridge 'vmbr0' — default on PVE
-#   E) Cloud-init template 'ubuntu-24.04-cloudinit-template' — see below
+#   E) Cloud-init template 'ubuntu-${UBUNTU_VERSION}-cloudinit-template' — see below
 # ============================================================
 init_pve_preflight() {
     local auto_create_template=false
@@ -733,14 +774,15 @@ EOFBRIDGE
     echo ""
 
     # --- Check 6: Cloud-init template -----------------------------------------------
-    echo "[6/7] Cloud-init template 'ubuntu-24.04-cloudinit-template'"
+    local template_name="ubuntu-${UBUNTU_VERSION}-cloudinit-template"
+    echo "[6/7] Cloud-init template '${template_name}'"
     local tmpl_exists=false
     tmpl_exists=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
         "${pm_ssh_user:-root}@${pm_host}" \
-        "qm list 2>/dev/null | grep -i 'ubuntu-24.04-cloudinit-template' | awk '{print \$NF}' | head -1" \
+        "qm list 2>/dev/null | grep -i '${template_name}' | awk '{print \$NF}' | head -1" \
         2>/dev/null || true)
     if [[ -n "$tmpl_exists" ]]; then
-        echo "    ✅ Template found  (ID $(qm list 2>/dev/null | grep -i 'ubuntu-24.04' | head -1))"
+        echo "    ✅ Template found  (ID $(qm list 2>/dev/null | grep -i 'ubuntu-${UBUNTU_VERSION}' | head -1))"
     else
         echo "    ❌ Template NOT FOUND" >&2
         echo ""
@@ -793,6 +835,10 @@ EOFBRIDGE
 _create_cloudinit_template_on_host() {
     local host="$1"
     local tmp_script="/tmp/op/_pve_setup_tmpl_$$ .sh"
+    local ubuntu_ver="${UBUNTU_VERSION}"
+    local template_name="ubuntu-${ubuntu_ver}-cloudinit-template"
+    local iso_name="ubuntu-${ubuntu_ver}-server-cloudimg-amd64.img"
+    local iso_url="https://cloud-images.ubuntu.com/releases/${ubuntu_ver}/release/${iso_name}"
 
     # Build an SSH command string once; used by each remote step.
     local ssh_base="ssh -o BatchMode=yes -o ConnectTimeout=60 -o StrictHostKeyChecking=no ${host}"
@@ -814,18 +860,18 @@ if [[ -n "${PM_PASSWORD:-}" ]]; then
     SSH="sshpass -p '${PM_PASSWORD}' \${SSH}"
 fi
 
-echo "[setup] downloading Ubuntu 24.04 cloud image ..."
-\${SSH} 'wget -qO /tmp/ubuntu-24.04-server-cloudimg-amd64.img https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img && echo done-download' \
+echo "[setup] downloading Ubuntu ${ubuntu_ver} cloud image ..."
+\${SSH} 'wget -qO /tmp/${iso_name} ${iso_url} && echo done-download' \
     || { echo "  download failed" >&2; exit 1; }
 
 echo "[setup] creating VM 9000 ..."
 \${SSH} 'qm create 9000 --memory 2048 --core 2 --sockets 1 --cpu host \
-    --name ubuntu-24.04-cloudinit-template --net0 virtio,bridge=vmbr0 \
+    --name ${template_name} --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single' \
     || { echo "  qm create failed" >&2; exit 1; }
 
 echo "[setup] importing disk to local-lvm ..."
-\${SSH} 'qm importdisk 9000 /tmp/ubuntu-24.04-server-cloudimg-amd64.img local-lvm && rm -f /tmp/ubuntu-24.04-server-cloudimg-amd64.img' \
+\${SSH} 'qm importdisk 9000 /tmp/${iso_name} local-lvm && rm -f /tmp/${iso_name}' \
     || { echo "  importdisk failed" >&2; exit 1; }
 
 echo "[setup] configuring cloud-init CD, serial console, boot order, template ..."
@@ -836,7 +882,7 @@ echo "[setup] configuring cloud-init CD, serial console, boot order, template ..
     echo TEMPLATE_READY' \
     || { echo "  template setup failed" >&2; exit 1; }
 
-echo "Template ubuntu-24.04-cloudinit-template created (VM 9000)."
+echo "Template ${template_name} created (VM 9000)."
 SETUPEOF
     chmod +x "$tmp_script"
     bash "$tmp_script"
@@ -850,11 +896,11 @@ SETUPEOF
 # -------------------------------------------------------
 download_iso() {
     local iso_dir="${HOME}/ISOs"
-    local iso_name="ubuntu-24.04-server-cloudimg-amd64.img"
+    local iso_name="ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
     local iso_path="${iso_dir}/${iso_name}"
-    local iso_url="https://cloud-images.ubuntu.com/releases/24.04/release/${iso_name}"
+    local iso_url="https://cloud-images.ubuntu.com/releases/${UBUNTU_VERSION}/release/${iso_name}"
 
-    echo "Downloading Ubuntu 24.04 cloud image to ${iso_path}..."
+    echo "Downloading Ubuntu ${UBUNTU_VERSION} cloud image to ${iso_path}..."
     mkdir -p "${iso_dir}"
 
     if [[ -f "${iso_path}" ]]; then
@@ -878,7 +924,7 @@ upload_iso() {
     ensure_pm_creds || return 1
 
     local iso_dir="${HOME}/ISOs"
-    local iso_name="ubuntu-24.04-server-cloudimg-amd64.img"
+    local iso_name="ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
     local iso_path="${iso_dir}/${iso_name}"
     local pm_storage="${PM_STORAGE:-local}"
 
@@ -888,7 +934,7 @@ upload_iso() {
         return 1
     fi
 
-    echo "Uploading ISO to Proxmox storage '${pm_storage}' on node '${PM_NODE}'..."
+    echo "Uploading Ubuntu ${UBUNTU_VERSION} ISO to Proxmox storage '${pm_storage}' on node '${PM_NODE}'..."
 
     local api_url="${PM_API_URL}"
     local token_id="${PM_API_TOKEN_ID}"
@@ -926,12 +972,12 @@ except Exception as e:
 create_template() {
     ensure_pm_creds || return 1
 
-    echo "Creating cloud-init template on Proxmox node '${PM_NODE}'..."
+    echo "Creating Ubuntu ${UBUNTU_VERSION} cloud-init template on Proxmox node '${PM_NODE}'..."
     _create_cloudinit_template_on_host "${PM_NODE}" || {
         echo "ERROR: Template creation failed" >&2
         return 1
     }
-    echo "✅ Template created successfully"
+    echo "✅ Ubuntu ${UBUNTU_VERSION} template created successfully"
 }
 
 
@@ -955,7 +1001,7 @@ case ${1:-} in
         export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
         export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
-        terraform -chdir="$TF_DIR" apply -auto-approve || exit 1
+        terraform -chdir="$TF_DIR" apply -auto-approve -var="pm_template=ubuntu-${UBUNTU_VERSION}-cloudinit-template" || exit 1
         wait_all_vms "${2:-$WAIT_TIMEOUT_DEFAULT}" || exit 1
         ;;
     "plan")
@@ -963,7 +1009,7 @@ case ${1:-} in
         export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
         export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
-        terraform -chdir="$TF_DIR" plan
+        terraform -chdir="$TF_DIR" plan -var="pm_template=ubuntu-${UBUNTU_VERSION}-cloudinit-template"
         ;;
     "destroy")
         terraform -chdir="$TF_DIR" destroy -auto-approve
@@ -1009,8 +1055,9 @@ Terraform KVM/QEMU + Proxmox Helper
 Platform : $PLATFORM (set TF_PLATFORM or pass as first arg)
 Env      : $ENV  (set TF_ENV or pass as second arg)
 TF dir   : $TF_DIR
+Ubuntu   : ${UBUNTU_VERSION} (set TF_UBUNTU_VERSION or pass --ubuntu-version=24.04|26.04)
 
-Usage: $0 [local|remote] [environment] [command]
+Usage: $0 [local|remote] [environment] [--ubuntu-version=24.04|26.04] [command]
 
 Commands:
   init              - Download images / check deps, bootstrap S3 state bucket, terraform init
@@ -1028,7 +1075,7 @@ Commands:
   init-pve          - Pre-flight checks for remote (Proxmox): connectivity, auth, storage, bridge, template
   --auto-create-template  - optional flag for init-pve; creates cloud-init template via SSH if missing
   recreate-network  - Recreate libvirt network (local only)
-  download-iso      - Download Ubuntu 24.04 cloud image to ~/ISOs/ (remote)
+  download-iso      - Download Ubuntu ${UBUNTU_VERSION} cloud image to ~/ISOs/ (remote)
   upload-iso        - Upload ISO to Proxmox storage (remote)
   create-template   - Create cloud-init template VM 9000 on Proxmox (remote)
 
@@ -1039,11 +1086,18 @@ Examples:
   $0 remote staging apply
   TF_ENV=production TF_PLATFORM=local $0 apply
   TF_PLATFORM=remote $0 wait
-  # Remote setup sequence:
+  # Remote setup sequence (default Ubuntu 24.04):
   $0 remote development download-iso
   $0 remote development upload-iso
   $0 remote development create-template
   $0 remote development apply
+  # With Ubuntu 26.04:
+  $0 remote development --ubuntu-version=26.04 download-iso
+  $0 remote development --ubuntu-version=26.04 upload-iso
+  $0 remote development --ubuntu-version=26.04 create-template
+  $0 remote development --ubuntu-version=26.04 apply
+  # Or via env var:
+  TF_UBUNTU_VERSION=26.04 $0 remote development download-iso
 EOF
         exit 1
         ;;

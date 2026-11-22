@@ -2,7 +2,7 @@
 # Note: state lives in the shared Floci bucket (key remote/production/...)
 # so apply here runs against the Proxmox host API, not against libvirt.
 
-ssh_pub_key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOQIgh+H2AXLQyqOm5uVT0r0FhT9iAnF6k9d7UjrxUh5 daniel.catalin.pirvu@gmail.com"
+ssh_pub_key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOQIgh+H2AXLQyqOm5uVT0r0FhT9iAnF6k9d7UjrxUh5 AstroLumina Admin"
 ssh_password = "ubuntu"
 
 cp_vcpu      = 2
