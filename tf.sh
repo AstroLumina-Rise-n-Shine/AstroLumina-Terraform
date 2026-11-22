@@ -156,8 +156,14 @@ fi
 # Shared credentials / constants (read from .env when present, never committed)
 # -------------------------------------------------------
 
-# Validate Tailscale variables are set (no defaults)
+# Validate Tailscale variables are set (no defaults, no auto-creation)
+# Idempotent: safe to call multiple times; caches success state.
 ensure_tailscale_vars() {
+    # Fast path: already validated this session
+    if [[ "${_TS_VARS_VALIDATED:-0}" == "1" ]]; then
+        return 0
+    fi
+
     local missing=()
 
     [[ -z "${TAILSCALE_AUTH_KEY:-}" ]]    && missing+=("TAILSCALE_AUTH_KEY")
@@ -166,7 +172,7 @@ ensure_tailscale_vars() {
     [[ -z "${TAILSCALE_API_TOKEN:-}" ]]   && missing+=("TAILSCALE_API_TOKEN")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "ERROR: Missing required Tailscale environment variables:" >&2
+        echo "ERROR: Missing required Tailscale environment variables (no defaults):" >&2
         for v in "${missing[@]}"; do
             echo "  - $v" >&2
         done
@@ -178,6 +184,13 @@ ensure_tailscale_vars() {
         echo "  export TAILSCALE_API_TOKEN=\"...\"" >&2
         return 1
     fi
+
+    # Export for Terraform (reads TF_VAR_* automatically)
+    export TF_VAR_tailscale_auth_key="${TAILSCALE_AUTH_KEY}"
+    export TF_VAR_tailscale_dns="${TAILSCALE_DNS}"
+
+    _TS_VARS_VALIDATED=1
+    return 0
 }
 
 SSH_USER="ubuntu"
@@ -224,8 +237,14 @@ fi
 # ALL variables are REQUIRED — no defaults, no auto-creation.
 # Token creation is user's responsibility in Proxmox UI.
 # -------------------------------------------------------
+# Idempotent: safe to call multiple times; caches success state.
 ensure_pm_creds() {
     if [[ "$PLATFORM" != "remote" ]]; then
+        return 0
+    fi
+
+    # Fast path: already validated this session
+    if [[ "${_PM_CREDS_VALIDATED:-0}" == "1" ]]; then
         return 0
     fi
 
@@ -239,7 +258,7 @@ ensure_pm_creds() {
     [[ -z "${PM_API_TOKEN_SECRET:-}" ]] && missing+=("PM_API_TOKEN_SECRET")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "ERROR: Missing required environment variables for remote platform:" >&2
+        echo "ERROR: Missing required environment variables for remote platform (no defaults):" >&2
         for v in "${missing[@]}"; do
             echo "  - $v" >&2
         done
@@ -263,6 +282,9 @@ ensure_pm_creds() {
 
     # Passthrough to module-level variable used by null_resource SSH upload
     export TF_VAR_pm_password="${PM_PASSWD}"
+
+    _PM_CREDS_VALIDATED=1
+    return 0
 }
 
 # Node inventory used by tailscale_start / wait_one_vm. Format:
@@ -306,47 +328,98 @@ check_packages() {
 # -------------------------------------------------------
 # Platform-specific bootstrap helpers
 # -------------------------------------------------------
+# Idempotent: safe to call multiple times; checks existence before action.
 ensure_network() {
     if [[ "$PLATFORM" != "local" ]]; then
         echo "network: N/A on remote (Proxmox uses vmbr0 directly)."
         return 0
     fi
-    echo "Ensuring libvirt network..."
+
+    # Fast path: already ensured this session
+    if [[ "${_NETWORK_ENSURED:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    echo "Ensuring libvirt network 'local'..."
+
+    # Check if network is defined
+    if ! sudo virsh net-info local &>/dev/null; then
+        echo "Network 'local' not defined — creating from config..."
+        sudo virsh net-define "$SCRIPT_DIR/configs/local/network.xml" || return 1
+    fi
+
+    # Check if network is active
     if sudo virsh net-info local 2>/dev/null | grep -q "Active:.*yes"; then
         echo "Network already active"
     else
-        sudo virsh net-start local
-        sudo virsh net-autostart local
+        echo "Starting network..."
+        sudo virsh net-start local || return 1
+        sudo virsh net-autostart local || return 1
     fi
+
+    _NETWORK_ENSURED=1
+    return 0
 }
 
+# Idempotent: downloads base image and converts to qcow2 only if missing.
+# Uses cached success state per Ubuntu version to avoid redundant checks.
 init_images() {
     if [[ "$PLATFORM" != "local" ]]; then
         echo "images: N/A on remote (Proxmox manages templates/storage pools)."
         return 0
     fi
-    libvirt_img_path="/var/lib/libvirt/images"
-    base_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
-    base_image_url="https://cloud-images.ubuntu.com/releases/${UBUNTU_VERSION}/release/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
 
+    # Fast path: already ensured this version this session
+    local cache_key="_IMAGES_ENSURED_${UBUNTU_VERSION//./_}"
+    if [[ "${!cache_key:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    local libvirt_img_path="/var/lib/libvirt/images"
+    local base_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
+    local base_image_url="https://cloud-images.ubuntu.com/releases/${UBUNTU_VERSION}/release/ubuntu-${UBUNTU_VERSION}-server-cloudimg-amd64.img"
+    local qcow2_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}.qcow2"
+
+    # Ensure directory exists with correct permissions
+    if [[ ! -d "$libvirt_img_path" ]]; then
+        echo "Creating libvirt images directory..."
+        sudo mkdir -p "$libvirt_img_path"
+        sudo chown libvirt-qemu:kvm "$libvirt_img_path"
+    fi
+
+    # Download base image if missing
     if [[ ! -f "$base_image" ]]; then
         echo "Base image not found at $base_image"
         echo "Downloading Ubuntu ${UBUNTU_VERSION}..."
-        sudo wget -O "$base_image" "$base_image_url"
+        sudo wget -O "$base_image" "$base_image_url" || {
+            echo "ERROR: Failed to download Ubuntu ${UBUNTU_VERSION}" >&2
+            return 1
+        }
         sudo chmod 644 "$base_image"
         sudo chown libvirt-qemu:kvm "$base_image"
         echo "...Download complete"
+    else
+        echo "Base image already exists: $base_image"
     fi
 
-    qcow2_image="${libvirt_img_path}/ubuntu-${UBUNTU_VERSION}.qcow2"
+    # Convert to qcow2 if missing
     if [[ ! -f "$qcow2_image" ]]; then
         echo "Ubuntu ${UBUNTU_VERSION} QCOW2 image not found at $qcow2_image"
         echo "Converting IMG to QCOW2..."
-        sudo qemu-img convert -O qcow2 "$base_image" "$qcow2_image"
+        sudo qemu-img convert -O qcow2 "$base_image" "$qcow2_image" || {
+            echo "ERROR: Failed to convert image" >&2
+            return 1
+        }
         sudo chmod 644 "$qcow2_image"
         sudo chown libvirt-qemu:kvm "$qcow2_image"
         echo "...Done"
+    else
+        echo "QCOW2 image already exists: $qcow2_image"
     fi
+
+    # Mark as done for this version
+    declare -g "$cache_key=1"
+    return 0
 }
 
 recreate_network() {
@@ -610,7 +683,13 @@ tailscale_start() {
 # (idempotent). Also removes leftover DynamoDB lock table from the old era.
 # REQUIRES: FLOCI_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION, AWS_EC2_METADATA_DISABLED
 # All must be set in the environment — no defaults provided.
+# Idempotent: safe to call multiple times; caches success state.
 ensure_state_backend() {
+    # Fast path: already ensured this session
+    if [[ "${_STATE_BACKEND_ENSURED:-0}" == "1" ]]; then
+        return 0
+    fi
+
     local missing=()
 
     [[ -z "${FLOCI_ENDPOINT:-}" ]]                && missing+=("FLOCI_ENDPOINT")
@@ -620,7 +699,7 @@ ensure_state_backend() {
     [[ -z "${AWS_EC2_METADATA_DISABLED:-}" ]]     && missing+=("AWS_EC2_METADATA_DISABLED")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "ERROR: Missing required environment variables for state backend:" >&2
+        echo "ERROR: Missing required environment variables for state backend (no defaults):" >&2
         for v in "${missing[@]}"; do
             echo "  - $v" >&2
         done
@@ -640,6 +719,8 @@ ensure_state_backend() {
         echo "aws CLI not found (needed for remote-state bootstrap)" >&2
         return 1
     fi
+
+    # Check and create S3 bucket if needed
     if ! aws --endpoint-url "$endpoint" s3api head-bucket --bucket astrolumina-terraform-state 2>/dev/null; then
         echo "Creating S3 state bucket..."
         aws --endpoint-url "$endpoint" s3 mb s3://astrolumina-terraform-state --region "$AWS_DEFAULT_REGION" || return 1
@@ -647,12 +728,17 @@ ensure_state_backend() {
     else
         echo "S3 state bucket already exists"
     fi
+
+    # Remove leftover DynamoDB lock table if it exists
     if aws --endpoint-url "$endpoint" dynamodb describe-table --table-name terraform-state-locks &>/dev/null; then
         echo "Removing leftover DynamoDB lock table (locking is S3-native now)..."
         aws --endpoint-url "$endpoint" dynamodb delete-table --table-name terraform-state-locks --region "$AWS_DEFAULT_REGION" || return 1
     else
         echo "No leftover DynamoDB lock table"
     fi
+
+    _STATE_BACKEND_ENSURED=1
+    return 0
 }
 
 # Status helpers — platform-aware
@@ -913,6 +999,20 @@ if [[ -n "${PM_PASSWORD:-}" ]]; then
     SSH="sshpass -p '${PM_PASSWORD}' \${SSH}"
 fi
 
+# Check if VM 9000 already exists (and is a template)
+existing_vmid=\$(\${SSH} 'qm list 2>/dev/null | awk '"'"'/^9000/ {print $1}'"'"'' 2>/dev/null || echo "")
+if [[ -n "\${existing_vmid}" ]]; then
+    is_template=\$(\${SSH} 'qm config 9000 2>/dev/null | grep -q "^template:" && echo yes || echo no' 2>/dev/null || echo no)
+    if [[ "\${is_template}" == "yes" ]]; then
+        echo "Template VM 9000 already exists and is a template. Skipping creation."
+        echo "TEMPLATE_READY"
+        exit 0
+    else
+        echo "VM 9000 exists but is not a template. Removing..."
+        \${SSH} 'qm stop 9000 2>/dev/null; qm destroy 9000 --purge 2>/dev/null' || true
+    fi
+fi
+
 echo "[setup] downloading Ubuntu ${ubuntu_ver} cloud image ..."
 \${SSH} 'wget -qO /tmp/${iso_name} ${iso_url} && echo done-download' \
     || { echo "  download failed" >&2; exit 1; }
@@ -947,6 +1047,7 @@ SETUPEOF
 
 # -------------------------------------------------------
 # Helper: Download Ubuntu ISO to ~/ISOs/
+# Idempotent: skips download if file already exists.
 # -------------------------------------------------------
 download_iso() {
     local iso_dir="${HOME}/ISOs"
@@ -958,7 +1059,8 @@ download_iso() {
     mkdir -p "${iso_dir}"
 
     if [[ -f "${iso_path}" ]]; then
-        echo "ISO already exists at ${iso_path}"
+        echo "ISO already exists at ${iso_path} (skipping download)"
+        ls -lh "${iso_path}"
         return 0
     fi
 
@@ -973,6 +1075,7 @@ download_iso() {
 
 # -------------------------------------------------------
 # Helper: Upload ISO to Proxmox storage
+# Idempotent: checks if ISO already exists on Proxmox before uploading.
 # -------------------------------------------------------
 upload_iso() {
     ensure_pm_creds || return 1
@@ -988,11 +1091,35 @@ upload_iso() {
         return 1
     fi
 
-    echo "Uploading Ubuntu ${UBUNTU_VERSION} ISO to Proxmox storage '${pm_storage}' on node '${PM_NODE}'..."
-
     local api_url="${PM_API_URL}"
     local token_id="${PM_API_TOKEN_ID}"
     local token_secret="${PM_API_TOKEN_SECRET}"
+
+    # Check if ISO already exists on Proxmox storage
+    echo "Checking if ISO already exists on Proxmox..."
+    local existing
+    existing=$(curl -k -sS \
+        -H "Authorization: PVEAPIToken=${token_id}=${token_secret}" \
+        "${api_url}api2/json/nodes/${PM_NODE}/storage/${pm_storage}/content" 2>/dev/null | \
+        python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    for item in d.get('data', []):
+        if item.get('volid', '').endswith('${iso_name}') or item.get('volid', '').endswith('${iso_name}.iso'):
+            print(item.get('volid', ''))
+            break
+except:
+    pass
+" 2>/dev/null)
+
+    if [[ -n "${existing}" ]]; then
+        echo "ISO already exists on Proxmox storage '${pm_storage}': ${existing}"
+        echo "Skipping upload."
+        return 0
+    fi
+
+    echo "Uploading Ubuntu ${UBUNTU_VERSION} ISO to Proxmox storage '${pm_storage}' on node '${PM_NODE}'..."
 
     # Upload via Proxmox API
     curl -k -sS -X POST \
@@ -1022,9 +1149,39 @@ except Exception as e:
 
 # -------------------------------------------------------
 # Helper: Create cloud-init template on Proxmox
+# Idempotent: checks if template already exists on Proxmox before creating.
 # -------------------------------------------------------
 create_template() {
     ensure_pm_creds || return 1
+
+    local template_name="ubuntu-${UBUNTU_VERSION}-cloudinit-template"
+    local api_url="${PM_API_URL}"
+    local token_id="${PM_API_TOKEN_ID}"
+    local token_secret="${PM_API_TOKEN_SECRET}"
+
+    # Check if template already exists on Proxmox
+    echo "Checking if template '${template_name}' already exists on Proxmox..."
+    local existing
+    existing=$(curl -k -sS \
+        -H "Authorization: PVEAPIToken=${token_id}=${token_secret}" \
+        "${api_url}api2/json/nodes/${PM_NODE}/qemu" 2>/dev/null | \
+        python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    for item in d.get('data', []):
+        if item.get('name') == '${template_name}' and item.get('template') == 1:
+            print(item.get('vmid', ''))
+            break
+except:
+    pass
+" 2>/dev/null)
+
+    if [[ -n "${existing}" ]]; then
+        echo "Template '${template_name}' already exists on Proxmox (VMID: ${existing})"
+        echo "Skipping creation."
+        return 0
+    fi
 
     echo "Creating Ubuntu ${UBUNTU_VERSION} cloud-init template on Proxmox node '${PM_NODE}'..."
     _create_cloudinit_template_on_host "${PM_NODE}" || {
@@ -1041,7 +1198,9 @@ case ${1:-} in
         ensure_network
         init_images
         ensure_state_backend || exit 1
-        ensure_pm_creds
+        if [[ "$PLATFORM" == "remote" ]]; then
+            ensure_pm_creds || exit 1
+        fi
         terraform -chdir="$TF_DIR" init
         ;;
     "fmt")
@@ -1052,16 +1211,12 @@ case ${1:-} in
         ;;
     "apply")
         ensure_tailscale_vars || exit 1
-        export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
-        export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
         terraform -chdir="$TF_DIR" apply -auto-approve -var="pm_template=ubuntu-${UBUNTU_VERSION}-cloudinit-template" || exit 1
         wait_all_vms "${2:-$WAIT_TIMEOUT_DEFAULT}" || exit 1
         ;;
     "plan")
         ensure_tailscale_vars || exit 1
-        export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
-        export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
         terraform -chdir="$TF_DIR" plan -var="pm_template=ubuntu-${UBUNTU_VERSION}-cloudinit-template"
         ;;
