@@ -1,0 +1,38 @@
+<!--
+  Simplified libvirt network definition — no MAC-bound DHCP reservations required.
+
+  Rationale (from the refactor that introduced environments/local vs
+  environments/remote): keeping reservations couples tf.sh, the Tailscale
+  hostnames and Kubernetes node names to a fixed set of MACs. The new
+  modules/libvirt_vm module accepts an optional `ipv4_address` +
+  `ipv4_gateway`; when both are present cloud-init pins the interface
+  directly and the VM is reachable at the caller-chosen IP regardless of
+  whatever lease the internal dnsmasq hands out.
+
+  Two modes remain supported so existing deployments keep working:
+    1. OLD (backward-compatible) – leave mac_address filled AND provide
+       matching <host .../> lines below. DNS/DHCP still resolves exactly
+       as before.
+    2. NEW (simpler) – omit mac_address from the module call; drop the
+       <host .../> lines from this file. The guest's own cloud-init sets
+       its static IP, bypassing the reservation table entirely.
+
+  The current definition keeps the reservations for now so nothing breaks
+  on the next $0 init; remove the <host .../> blocks once every env has
+  migrated to the direct-IP mode.
+-->
+<network>
+  <name>local</name>
+  <forward mode='nat'/>
+  <bridge name='virbr0' stp='on' delay='0'/>
+  <mac address='52:54:00:xx:yy:zz'/>
+  <ip address='192.168.200.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.200.213' end='192.168.200.254'/>
+      <!-- Keep these until every environment switches to ipv4_address mode. -->
+      <host mac='52:54:00:a1:b2:c3' ip='192.168.200.210'/>
+      <host mac='52:54:00:d1:e2:f3' ip='192.168.200.211'/>
+      <host mac='52:54:00:aa:bb:cc' ip='192.168.200.212'/>
+    </dhcp>
+  </ip>
+</network>

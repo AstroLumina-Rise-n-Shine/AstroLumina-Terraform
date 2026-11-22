@@ -12,4 +12,5 @@ worker_memory_mb = 4096
 worker_disk_gb   = 30
 
 # Labeling: stamped on every VM at /etc/astrolumina-environment.
-environment = "development"
+environment = "local-development"
+tailscale_suffix = ""
