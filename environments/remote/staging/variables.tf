@@ -19,7 +19,7 @@ variable "tailscale_auth_key" {
   sensitive   = true
 }
 
-variable "tailscale_suffix" {
+variable "tailscale_dns" {
   description = "Tailscale MagicDNS suffix"
   type        = string
   default     = ""

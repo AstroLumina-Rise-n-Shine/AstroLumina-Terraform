@@ -53,10 +53,10 @@ output "ssh_connection_info" {
 
 output "tailscale_hostnames" {
   description = "Stable Tailscale MagicDNS hostnames (null when suffix not set)"
-  value = var.tailscale_suffix != "" ? {
-    control_plane = "${module.rke2_cp_01.vm_name}.${var.tailscale_suffix}"
-    worker_1      = "${module.rke2_wk_01.vm_name}.${var.tailscale_suffix}"
-    worker_2      = "${module.rke2_wk_02.vm_name}.${var.tailscale_suffix}"
+  value = var.tailscale_dns != "" ? {
+    control_plane = "${module.rke2_cp_01.vm_name}.${var.tailscale_dns}"
+    worker_1      = "${module.rke2_wk_01.vm_name}.${var.tailscale_dns}"
+    worker_2      = "${module.rke2_wk_02.vm_name}.${var.tailscale_dns}"
   } : null
 }
 

@@ -12,4 +12,4 @@ worker_disk_gb   = 30
 
 # Labeling: stamped on every VM at /etc/astrolumina-environment.
 environment = "local-production"
-tailscale_suffix = ""
+tailscale_dns = ""

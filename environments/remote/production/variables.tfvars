@@ -14,7 +14,7 @@ worker_memory_mb = 4096
 worker_disk_gb   = 30
 
 environment      = "remote-production"
-tailscale_suffix = ""
+tailscale_dns = ""
 
 # -------------------------------------------------------
 # Proxmox host pointers (match your lab)

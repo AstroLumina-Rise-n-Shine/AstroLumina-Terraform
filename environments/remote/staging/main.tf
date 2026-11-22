@@ -22,7 +22,7 @@ locals {
 # Module calls – QEMU/Proxmox path via modules/qm_vm
 # ============================================================
 module "rke2_cp_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.8"
 
   vm_name            = "rke2-qm-cp-01"
   vcpu               = var.cp_vcpu
@@ -54,7 +54,7 @@ module "rke2_cp_01" {
 }
 
 module "rke2_wk_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.8"
 
   vm_name            = "rke2-qm-wk-01"
   vcpu               = var.worker_vcpu
@@ -64,7 +64,6 @@ module "rke2_wk_01" {
   ssh_pub_key        = var.ssh_pub_key
   ssh_password       = var.ssh_password
   tailscale_auth_key = var.tailscale_auth_key
-  tailnet_dns_zone   = "k8s.astrolumina.ro"
 
   pm_api_url        = var.pm_api_url
   pm_node           = var.pm_node
@@ -87,7 +86,7 @@ module "rke2_wk_01" {
 }
 
 module "rke2_wk_02" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/qm_vm?ref=1.0.8"
 
   vm_name            = "rke2-qm-wk-02"
   vcpu               = var.worker_vcpu

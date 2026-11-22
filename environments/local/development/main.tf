@@ -17,7 +17,7 @@ locals {
 # Module calls — libvirt path via modules/libvirt_vm
 # ============================================================
 module "rke2_cp_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.8"
 
   vm_name            = "rke2-lbvrt-cp-01"
   vcpu               = var.cp_vcpu
@@ -45,7 +45,7 @@ module "rke2_cp_01" {
 }
 
 module "rke2_wk_01" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.8"
 
   vm_name            = "rke2-lbvrt-wk-01"
   vcpu               = var.worker_vcpu
@@ -56,9 +56,6 @@ module "rke2_wk_01" {
   ssh_password       = var.ssh_password
   tailscale_auth_key = var.tailscale_auth_key
   mac_address        = "52:54:00:d1:e2:f3"
-
-  # This node answers *.k8s.astrolumina.ro with its own Tailscale IP (split DNS)
-  tailnet_dns_zone = "k8s.astrolumina.ro"
 
   host_share_path = local.k8s_share_path
 
@@ -76,7 +73,7 @@ module "rke2_wk_01" {
 }
 
 module "rke2_wk_02" {
-  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.7"
+  source = "git::https://github.com/AstroLumina-Rise-n-Shine/AstroLumina-Terraform-Library.git//modules/libvirt_vm?ref=1.0.8"
 
   vm_name            = "rke2-lbvrt-wk-02"
   vcpu               = var.worker_vcpu

@@ -26,8 +26,8 @@ variable "tailscale_auth_key" {
   sensitive   = true
 }
 
-variable "tailscale_suffix" {
-  # Populated from the TF_VAR_tailscale_suffix environment variable (MagicDNS tailnet suffix, e.g. my-tailnet.ts.net)
+variable "tailscale_dns" {
+  # Populated from the TF_VAR_tailscale_dns environment variable (MagicDNS tailnet suffix, e.g. my-tailnet.ts.net)
   description = "Tailscale MagicDNS suffix used to build stable VM hostnames (empty string disables MagicDNS outputs)"
   type        = string
   default     = ""

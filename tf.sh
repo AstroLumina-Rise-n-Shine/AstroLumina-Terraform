@@ -97,10 +97,10 @@ fi
 # -------------------------------------------------------
 # Shared credentials / constants (read from .env when present, never committed)
 # -------------------------------------------------------
-tailscale_auth_key="${TAILSCALE_AUTH_KEY:-}"
-tailscale_suffix="${TAILSCALE_SUFFIX:-}"
-tailscale_api_token="${TAILSCALE_API_TOKEN:-}"
-tailscale_tailnet="${TAILSCALE_TAILNET:--}"
+TAILSCALE_TAILNET="${TAILSCALE_TAILNET}"
+TAILSCALE_DNS="${TAILSCALE_DNS}"
+TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY}"
+TAILSCALE_API_TOKEN="${TAILSCALE_API_TOKEN}"
 
 SSH_USER="ubuntu"
 WAIT_INTERVAL=10
@@ -122,29 +122,51 @@ fi
 # -------------------------------------------------------
 # Proxmox credentials (remote platform only)
 # Set via env vars or .env file; never hard-coded.
-# Terraform provider reads PM_API_URL / PM_USER / PM_PASSWD / PM_OTP
+# Terraform provider reads PM_API_URL / PM_USER / PM_PASSWD
 # automatically, but we also export TF_VAR_pm_password for the
 # null_resource SSH upload inside qm_vm (optional when tailscale/dnsmasq).
+# ALL variables are REQUIRED — no defaults, no auto-creation.
+# Token creation is user's responsibility in Proxmox UI.
 # -------------------------------------------------------
 ensure_pm_creds() {
     if [[ "$PLATFORM" != "remote" ]]; then
         return 0
     fi
-    if [[ -z "${PM_API_URL:-}" ]]; then
-        echo "WARNING: PM_API_URL not set — remote terraform will fail." >&2
-        echo "         Export it (e.g. export PM_API_URL=https://192.168.100.200:8006/) before running." >&2
+
+    local missing=()
+
+    [[ -z "${PM_API_URL:-}" ]]       && missing+=("PM_API_URL")
+    [[ -z "${PM_USER:-}" ]]          && missing+=("PM_USER")
+    [[ -z "${PM_PASSWD:-}" ]]        && missing+=("PM_PASSWD")
+    [[ -z "${PM_NODE:-}" ]]          && missing+=("PM_NODE")
+    [[ -z "${PM_API_TOKEN_ID:-}" ]]  && missing+=("PM_API_TOKEN_ID")
+    [[ -z "${PM_API_TOKEN_SECRET:-}" ]] && missing+=("PM_API_TOKEN_SECRET")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "ERROR: Missing required environment variables for remote platform:" >&2
+        for v in "${missing[@]}"; do
+            echo "  - $v" >&2
+        done
+        echo "" >&2
+        echo "Set them before running, e.g.:" >&2
+        echo "  export PM_API_URL=\"https://192.168.100.200:8006/\"" >&2
+        echo "  export PM_USER=\"root@pam\"" >&2
+        echo "  export PM_PASSWD=\"<root-password>\"" >&2
+        echo "  export PM_NODE=\"danel\"" >&2
+        echo "  export PM_API_TOKEN_ID=\"root@pam!ProxmoxRoot=<UUID>\"" >&2
+        echo "  export PM_API_TOKEN_SECRET=\"<api-token-secret>\"" >&2
+        echo "" >&2
+        echo "Create the API token in Proxmox UI: Datacenter → Permissions → API Tokens → Add" >&2
+        return 1
     fi
-    # Terraform proxmox provider auto-reads these env vars:
-    export PM_API_URL="${PM_API_URL:-https://192.168.100.200:8006/}"
-    export PM_USER="${PM_USER:-root@pam}"
-    # PM_PASSWD must be non-empty for init/plan/apply against a real PVE host.
-    if [[ -z "${PM_PASSWD:-}" ]]; then
-        echo "WARNING: PM_PASSWD not set — provider auth will fail on next API call." >&2
-        echo "         Get the password from your PVE UI: Datacenter → PVE → Users → root@pam." >&2
-    fi
-    export PM_OTP="${PM_OTP:-}"
+
+    # Export for Terraform provider (reads PM_API_URL, PM_USER, PM_PASSWD)
+    export PM_API_URL
+    export PM_USER
+    export PM_PASSWD
+
     # Passthrough to module-level variable used by null_resource SSH upload
-    export TF_VAR_pm_password="${PM_PASSWD:-}"
+    export TF_VAR_pm_password="${PM_PASSWD}"
 }
 
 # Node inventory used by tailscale_start / wait_one_vm. Format:
@@ -439,7 +461,7 @@ tailscale_start() {
             echo "OK: ${id} tailscale already up (${ts_ip}), skipping re-auth"
             continue
         fi
-        if [[ -z "${tailscale_auth_key:-}" ]]; then
+        if [[ -z "${TAILSCALE_AUTH_KEY:-}" ]]; then
             echo "FAILED: ${id}: Tailscale session is down and no auth key is set. Export TAILSCALE_AUTH_KEY and re-run."
             failed=1
             continue
@@ -450,7 +472,7 @@ tailscale_start() {
             failed=1
             continue
         fi
-        if ! ssh_vm "$ip" "sudo tailscale up --authkey='${tailscale_auth_key}' --hostname=${name} --accept-dns" < /dev/null; then
+        if ! ssh_vm "$ip" "sudo tailscale up --authkey='${TAILSCALE_AUTH_KEY}' --hostname=${name} --accept-dns" < /dev/null; then
             echo "FAILED: ${id}: non-interactive 'tailscale up' failed (key may be expired -- generate a new reusable one)."
             failed=1
             continue
@@ -470,82 +492,50 @@ tailscale_start() {
     echo "Tailscale is up on all VMs."
 }
 
-# Split-DNS zone served by worker-01's dnsmasq (must match main.tf).
-TAILNET_DNS_ZONE="k8s.astrolumina.ro"
-TAILSCALE_API_TOKEN="${tailscale_api_token}"
-TAILSCALE_TAILNET="${tailscale_tailnet}"
-
-dns_sync() {
-    if [[ "$PLATFORM" != "local" ]]; then
-        echo "dns-sync: skipped on remote (worker-01 lives on the PVE bridge; repoint split-DNS manually or wait for Tailscale to propagate)."
-        return 0
-    fi
-    local lan_ip ts_ip current merged
-    lan_ip="$VM_WK_01_IP"
-    ts_ip=$(ssh_vm "$lan_ip" "tailscale ip -4 2>/dev/null" | head -1)
-    if ! echo "$ts_ip" | grep -qE '^100\.'; then
-        echo "dns-sync: worker-01 has no Tailscale IP yet (got '${ts_ip:-none}'). Run '$0 wait' first."
-        return 1
-    fi
-    echo "dns-sync: worker-01 tailscale IP is ${ts_ip}"
-    ssh_vm "$lan_ip" "echo 'address=/${TAILNET_DNS_ZONE}/${ts_ip}' | sudo tee /etc/dnsmasq.d/tailnet-zone.conf >/dev/null && sudo systemctl restart dnsmasq" || {
-        echo "dns-sync: failed to refresh dnsmasq on worker-01."
-        return 1
-    }
-    if [[ -z "$TAILSCALE_API_TOKEN" ]]; then
-        echo "dns-sync: TAILSCALE_API_TOKEN is not set, skipping Tailscale admin update."
-        echo "Generate a token at https://login.tailscale.com/admin/settings/keys,"
-        echo "export TAILSCALE_API_TOKEN=<token>, then rerun '$0 dns-sync'."
-        return 1
-    fi
-    current=$(curl -sS -u "${TAILSCALE_API_TOKEN}:" "https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}/dns/split-dns" || echo "{}")
-    merged=$(echo "$current" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-if not isinstance(data, dict):
-    data = {}
-data['${TAILNET_DNS_ZONE}'] = ['${ts_ip}']
-print(json.dumps(data))
-")
-    curl -sS -u "${TAILSCALE_API_TOKEN}:" -X PUT \
-        -H "Content-Type: application/json" \
-        --data "$merged" \
-        "https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}/dns/split-dns" || {
-        echo "dns-sync: Tailscale API update failed."
-        return 1
-    }
-    echo ""
-    echo "dns-sync: tailnet split-DNS updated: ${TAILNET_DNS_ZONE} -> ${ts_ip}"
-    if dig +short @"$ts_ip" "production.${TAILNET_DNS_ZONE}" | grep -qE '^100\.'; then
-        echo "dns-sync: verified production.${TAILNET_DNS_ZONE} resolves via ${ts_ip}."
-    else
-        echo "dns-sync: WARNING: verification query failed."
-        return 1
-    fi
-}
-
 # Ensure the Floci-emulated S3 bucket used for remote state exists
 # (idempotent). Also removes leftover DynamoDB lock table from the old era.
+# REQUIRES: FLOCI_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION, AWS_EC2_METADATA_DISABLED
+# All must be set in the environment — no defaults provided.
 ensure_state_backend() {
-    local endpoint="${FLOCI_ENDPOINT:-http://192.168.100.50:4566}"
-    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
-    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
-    export AWS_EC2_METADATA_DISABLED=true
-    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+    local missing=()
+
+    [[ -z "${FLOCI_ENDPOINT:-}" ]]                && missing+=("FLOCI_ENDPOINT")
+    [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]             && missing+=("AWS_ACCESS_KEY_ID")
+    [[ -z "${AWS_SECRET_ACCESS_KEY:-}" ]]         && missing+=("AWS_SECRET_ACCESS_KEY")
+    [[ -z "${AWS_DEFAULT_REGION:-}" ]]            && missing+=("AWS_DEFAULT_REGION")
+    [[ -z "${AWS_EC2_METADATA_DISABLED:-}" ]]     && missing+=("AWS_EC2_METADATA_DISABLED")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "ERROR: Missing required environment variables for state backend:" >&2
+        for v in "${missing[@]}"; do
+            echo "  - $v" >&2
+        done
+        echo "" >&2
+        echo "Set them before running, e.g.:" >&2
+        echo "  export FLOCI_ENDPOINT=\"http://192.168.100.50:4566\"" >&2
+        echo "  export AWS_ACCESS_KEY_ID=\"test\"" >&2
+        echo "  export AWS_SECRET_ACCESS_KEY=\"test\"" >&2
+        echo "  export AWS_DEFAULT_REGION=\"us-east-1\"" >&2
+        echo "  export AWS_EC2_METADATA_DISABLED=\"true\"" >&2
+        return 1
+    fi
+
+    local endpoint="${FLOCI_ENDPOINT}"
+
     if ! command -v aws &> /dev/null; then
         echo "aws CLI not found (needed for remote-state bootstrap)" >&2
         return 1
     fi
     if ! aws --endpoint-url "$endpoint" s3api head-bucket --bucket astrolumina-terraform-state 2>/dev/null; then
         echo "Creating S3 state bucket..."
-        aws --endpoint-url "$endpoint" s3 mb s3://astrolumina-terraform-state --region us-east-1 || return 1
+        aws --endpoint-url "$endpoint" s3 mb s3://astrolumina-terraform-state --region "$AWS_DEFAULT_REGION" || return 1
         aws --endpoint-url "$endpoint" s3api put-bucket-versioning --bucket astrolumina-terraform-state --versioning-configuration Status=Enabled || return 1
     else
         echo "S3 state bucket already exists"
     fi
     if aws --endpoint-url "$endpoint" dynamodb describe-table --table-name terraform-state-locks &>/dev/null; then
         echo "Removing leftover DynamoDB lock table (locking is S3-native now)..."
-        aws --endpoint-url "$endpoint" dynamodb delete-table --table-name terraform-state-locks --region us-east-1 || return 1
+        aws --endpoint-url "$endpoint" dynamodb delete-table --table-name terraform-state-locks --region "$AWS_DEFAULT_REGION" || return 1
     else
         echo "No leftover DynamoDB lock table"
     fi
@@ -833,6 +823,95 @@ SETUPEOF
     return $rc
 }
 
+# -------------------------------------------------------
+# Helper: Download Ubuntu ISO to ~/ISOs/
+# -------------------------------------------------------
+download_iso() {
+    local iso_dir="${HOME}/ISOs"
+    local iso_name="ubuntu-24.04-server-cloudimg-amd64.img"
+    local iso_path="${iso_dir}/${iso_name}"
+    local iso_url="https://cloud-images.ubuntu.com/releases/24.04/release/${iso_name}"
+
+    echo "Downloading Ubuntu 24.04 cloud image to ${iso_path}..."
+    mkdir -p "${iso_dir}"
+
+    if [[ -f "${iso_path}" ]]; then
+        echo "ISO already exists at ${iso_path}"
+        return 0
+    fi
+
+    wget -O "${iso_path}" "${iso_url}" || {
+        echo "ERROR: Failed to download ISO" >&2
+        return 1
+    }
+
+    echo "✅ Downloaded: ${iso_path}"
+    ls -lh "${iso_path}"
+}
+
+# -------------------------------------------------------
+# Helper: Upload ISO to Proxmox storage
+# -------------------------------------------------------
+upload_iso() {
+    ensure_pm_creds || return 1
+
+    local iso_dir="${HOME}/ISOs"
+    local iso_name="ubuntu-24.04-server-cloudimg-amd64.img"
+    local iso_path="${iso_dir}/${iso_name}"
+    local pm_storage="${PM_STORAGE:-local}"
+
+    if [[ ! -f "${iso_path}" ]]; then
+        echo "ERROR: ISO not found at ${iso_path}" >&2
+        echo "Run: ./tf.sh remote ${ENV} download-iso" >&2
+        return 1
+    fi
+
+    echo "Uploading ISO to Proxmox storage '${pm_storage}' on node '${PM_NODE}'..."
+
+    local api_url="${PM_API_URL}"
+    local token_id="${PM_API_TOKEN_ID}"
+    local token_secret="${PM_API_TOKEN_SECRET}"
+
+    # Upload via Proxmox API
+    curl -k -sS -X POST \
+        -H "Authorization: PVEAPIToken=${token_id}=${token_secret}" \
+        -F "content=iso" \
+        -F "filename=@${iso_path}" \
+        "${api_url}api2/json/nodes/${PM_NODE}/storage/${pm_storage}/upload" | \
+        python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if d.get('data') is not None:
+        print('✅ Upload successful')
+    else:
+        print('Response:', json.dumps(d))
+        sys.exit(1)
+except Exception as e:
+    print('Parse error:', e)
+    sys.exit(1)
+" || {
+        echo "ERROR: Upload failed" >&2
+        return 1
+    }
+
+    echo "✅ ISO uploaded to Proxmox storage '${pm_storage}'"
+}
+
+# -------------------------------------------------------
+# Helper: Create cloud-init template on Proxmox
+# -------------------------------------------------------
+create_template() {
+    ensure_pm_creds || return 1
+
+    echo "Creating cloud-init template on Proxmox node '${PM_NODE}'..."
+    _create_cloudinit_template_on_host "${PM_NODE}" || {
+        echo "ERROR: Template creation failed" >&2
+        return 1
+    }
+    echo "✅ Template created successfully"
+}
+
 
 case ${1:-} in
     "init")
@@ -850,16 +929,15 @@ case ${1:-} in
         terraform -chdir="$TF_DIR" validate
         ;;
     "apply")
-        export TF_VAR_tailscale_auth_key="$tailscale_auth_key"
-        export TF_VAR_tailscale_suffix="$tailscale_suffix"
+        export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
+        export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
         terraform -chdir="$TF_DIR" apply -auto-approve || exit 1
         wait_all_vms "${2:-$WAIT_TIMEOUT_DEFAULT}" || exit 1
-        dns_sync
         ;;
     "plan")
-        export TF_VAR_tailscale_auth_key="$tailscale_auth_key"
-        export TF_VAR_tailscale_suffix="$tailscale_suffix"
+        export TF_VAR_tailscale_auth_key="$TAILSCALE_AUTH_KEY"
+        export TF_VAR_tailscale_dns="$TAILSCALE_DNS"
         ensure_pm_creds
         terraform -chdir="$TF_DIR" plan
         ;;
@@ -882,9 +960,6 @@ case ${1:-} in
     "wait")
         wait_all_vms "${2:-$WAIT_TIMEOUT_DEFAULT}"
         ;;
-    "dns-sync")
-        dns_sync
-        ;;
     "recreate-network")
         recreate_network
         ;;
@@ -893,6 +968,15 @@ case ${1:-} in
         ;;
     "init-pve")
         init_pve_preflight "${2:-}" "${3:-}"
+        ;;
+    "download-iso")
+        download_iso
+        ;;
+    "upload-iso")
+        upload_iso
+        ;;
+    "create-template")
+        create_template
         ;;
     *)
         cat <<EOF
@@ -916,11 +1000,13 @@ Commands:
   force-stop        - Force stop VMs (local only)
   ips               - Show DHCP leases / VM status (local) or suggest remote alternative
   wait [timeout]    - Wait for cloud-init done + tailscale up on all VMs
-  dns-sync          - Repoint k8s.astrolumina.ro split-DNS at worker-01's live tailnet IP
   status            - Show running VMs
-   init-pve          - Pre-flight checks for remote (Proxmox): connectivity, auth, storage, bridge, template
-   --auto-create-template  - optional flag for init-pve; creates cloud-init template via SSH if missing
-  recreate-network  - Recreate libvirt default network (local only)
+  init-pve          - Pre-flight checks for remote (Proxmox): connectivity, auth, storage, bridge, template
+  --auto-create-template  - optional flag for init-pve; creates cloud-init template via SSH if missing
+  recreate-network  - Recreate libvirt network (local only)
+  download-iso      - Download Ubuntu 24.04 cloud image to ~/ISOs/ (remote)
+  upload-iso        - Upload ISO to Proxmox storage (remote)
+  create-template   - Create cloud-init template VM 9000 on Proxmox (remote)
 
 Examples:
   $0 init
@@ -929,6 +1015,11 @@ Examples:
   $0 remote staging apply
   TF_ENV=production TF_PLATFORM=local $0 apply
   TF_PLATFORM=remote $0 wait
+  # Remote setup sequence:
+  $0 remote development download-iso
+  $0 remote development upload-iso
+  $0 remote development create-template
+  $0 remote development apply
 EOF
         exit 1
         ;;
